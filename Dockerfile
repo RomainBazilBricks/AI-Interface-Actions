@@ -41,9 +41,12 @@ COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Installation des navigateurs Playwright
+# Installation des navigateurs Playwright (en tant que root pour accès système)
 RUN playwright install chromium \
     && playwright install-deps chromium
+
+# Configurer les variables d'environnement Playwright pour utiliser les navigateurs système
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Configuration Supervisor pour gérer VNC et l'application
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
@@ -59,7 +62,8 @@ RUN chmod +x /app/start-railway.sh
 # Création des répertoires et permissions
 RUN mkdir -p /app/logs /tmp/.X11-unix /home/appuser/.vnc \
     && chown -R appuser:appuser /app /home/appuser \
-    && chmod 1777 /tmp/.X11-unix
+    && chmod 1777 /tmp/.X11-unix \
+    && chmod -R 755 /ms-playwright 2>/dev/null || true
 
 # Exposition des ports (API + VNC)
 EXPOSE 8000 5900
