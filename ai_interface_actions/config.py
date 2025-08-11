@@ -33,7 +33,14 @@ class Settings(BaseSettings):
     
     # Configuration Manus.ai
     manus_base_url: str = Field(default="https://www.manus.ai", description="URL de base de Manus.ai")
-    # Note: Plus besoin d'identifiants - connexion manuelle une fois, session persiste 30 jours
+    
+    # Session Manus.ai via variables d'environnement (optionnel, alternative au fichier session_state.json)
+    manus_session_token: str = Field(default="", description="Token de session Manus.ai extrait du navigateur")
+    manus_auth_token: str = Field(default="", description="Token d'authentification Manus.ai")
+    manus_user_id: str = Field(default="", description="ID utilisateur Manus.ai")
+    manus_csrf_token: str = Field(default="", description="Token CSRF Manus.ai")
+    manus_cookies: str = Field(default="", description="Cookies Manus.ai au format JSON")
+    manus_local_storage: str = Field(default="", description="LocalStorage Manus.ai au format JSON")
     
     # Sécurité et rate limiting
     rate_limit_per_minute: int = Field(default=10, description="Limite de requêtes par minute")

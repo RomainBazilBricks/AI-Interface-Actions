@@ -3,6 +3,7 @@ Module d'automatisation du navigateur avec Playwright
 """
 import asyncio
 import structlog
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError
@@ -99,7 +100,7 @@ class BrowserAutomation:
                     "user_agent": context_options["user_agent"],
                     "locale": context_options["locale"],
                     "timezone_id": context_options["timezone_id"],
-                    "storage_state": "session_state.json" if Path("session_state.json").exists() else None
+                    "storage_state": self._get_storage_state()
                 }
                 
                 # Ajouter viewport seulement s'il est défini
@@ -147,6 +148,79 @@ class BrowserAutomation:
         except Exception as e:
             logger.error("Erreur lors du nettoyage", error=str(e))
     
+    def _get_storage_state(self) -> Optional[Dict[str, Any]]:
+        """
+        Récupère l'état de stockage depuis les variables d'environnement ou le fichier
+        Priorité : Variables d'environnement > Fichier session_state.json
+        """
+        try:
+            # Option 1 : Variables d'environnement
+            if settings.manus_cookies or settings.manus_session_token:
+                logger.info("Utilisation des variables d'environnement pour la session")
+                
+                storage_state = {
+                    "cookies": [],
+                    "origins": []
+                }
+                
+                # Ajouter les cookies depuis les variables d'environnement
+                if settings.manus_cookies:
+                    try:
+                        cookies_data = json.loads(settings.manus_cookies)
+                        storage_state["cookies"] = cookies_data
+                    except json.JSONDecodeError:
+                        logger.warning("Format JSON invalide pour manus_cookies")
+                
+                # Ajouter les tokens individuels comme cookies
+                if settings.manus_session_token:
+                    storage_state["cookies"].append({
+                        "name": "session_token",
+                        "value": settings.manus_session_token,
+                        "domain": ".manus.ai",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True
+                    })
+                
+                if settings.manus_auth_token:
+                    storage_state["cookies"].append({
+                        "name": "auth_token", 
+                        "value": settings.manus_auth_token,
+                        "domain": ".manus.ai",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True
+                    })
+                
+                # Ajouter localStorage
+                if settings.manus_local_storage:
+                    try:
+                        local_storage = json.loads(settings.manus_local_storage)
+                        storage_state["origins"] = [{
+                            "origin": "https://www.manus.ai",
+                            "localStorage": [
+                                {"name": k, "value": v} for k, v in local_storage.items()
+                            ]
+                        }]
+                    except json.JSONDecodeError:
+                        logger.warning("Format JSON invalide pour manus_local_storage")
+                
+                return storage_state
+            
+            # Option 2 : Fichier session_state.json
+            elif Path("session_state.json").exists():
+                logger.info("Utilisation du fichier session_state.json")
+                return "session_state.json"
+            
+            # Option 3 : Aucune session
+            else:
+                logger.info("Aucune session configurée")
+                return None
+                
+        except Exception as e:
+            logger.error("Erreur lors de la récupération de l'état de stockage", error=str(e))
+            return None
+
     async def ensure_initialized(self, headless_override: bool = None) -> None:
         """S'assure que le navigateur est initialisé"""
         if not self.is_initialized:
