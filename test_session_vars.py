@@ -57,17 +57,18 @@ def test_session_config():
     if session_file.exists():
         print(f"📊 Taille: {session_file.stat().st_size} bytes")
     
-    # Test de la méthode _get_storage_state
+    # Test de la méthode _get_storage_state (asynchrone)
     print(f"\n🔍 Test de récupération de l'état de stockage...")
     try:
-        storage_state = browser_manager._get_storage_state()
+        import asyncio
+        storage_state = asyncio.run(browser_manager._get_storage_state())
         if storage_state:
             if isinstance(storage_state, str):
                 print(f"✅ Utilisation du fichier: {storage_state}")
             elif isinstance(storage_state, dict):
                 cookies_count = len(storage_state.get("cookies", []))
                 origins_count = len(storage_state.get("origins", []))
-                print(f"✅ Variables d'environnement: {cookies_count} cookies, {origins_count} origins")
+                print(f"✅ Session récupérée: {cookies_count} cookies, {origins_count} origins")
             else:
                 print(f"⚠️ Type inattendu: {type(storage_state)}")
         else:

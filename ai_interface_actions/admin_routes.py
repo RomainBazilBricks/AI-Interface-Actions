@@ -9,6 +9,7 @@ from pathlib import Path
 import os
 
 from ai_interface_actions.browser_automation import browser_manager
+from ai_interface_actions.config import settings
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -70,21 +71,49 @@ async def setup_session_endpoint(background_tasks: BackgroundTasks):
 
 @router.get("/session-status", response_model=SessionStatusResponse)
 async def check_session_status():
-    """Vérifie le statut de la session et du VNC"""
+    """Vérifie le statut de la session via API, variables d'environnement et fichier"""
     try:
+        from ai_interface_actions.credentials_client import credentials_client
+        
         session_file = Path("session_state.json")
-        railway_url = os.getenv("RAILWAY_PUBLIC_DOMAIN", "votre-app.railway.app")
         
-        # Vérifier si VNC est disponible
-        vnc_available = check_vnc_process()
+        # Vérifier l'API de credentials
+        api_available = credentials_client.is_configured()
+        api_credential = None
         
-        return SessionStatusResponse(
-            session_exists=session_file.exists(),
-            session_size=session_file.stat().st_size if session_file.exists() else 0,
-            browser_initialized=browser_manager.is_initialized,
-            vnc_available=vnc_available,
-            railway_url=f"vnc://{railway_url}:5900"
-        )
+        if api_available:
+            try:
+                api_credential = await credentials_client.get_credential_for_platform(
+                    platform="manus",
+                    user_identifier=settings.credentials_user_identifier
+                )
+            except Exception as e:
+                logger.warning("Erreur lors de l'accès à l'API", error=str(e))
+        
+        # Déterminer la source de session
+        if api_credential:
+            session_source = "API de credentials"
+            session_exists = True
+        elif settings.manus_session_token or settings.manus_cookies:
+            session_source = "Variables d'environnement"
+            session_exists = True
+        elif session_file.exists():
+            session_source = "Fichier session_state.json"
+            session_exists = True
+        else:
+            session_source = "Aucune"
+            session_exists = False
+        
+        return {
+            "session_exists": session_exists,
+            "session_source": session_source,
+            "api_available": api_available,
+            "api_credential_id": api_credential.get("id") if api_credential else None,
+            "session_size": session_file.stat().st_size if session_file.exists() else 0,
+            "browser_initialized": browser_manager.is_initialized,
+            "vnc_available": False,  # VNC supprimé
+            "railway_url": None
+        }
         
     except Exception as e:
         logger.error("Erreur vérification session", error=str(e))

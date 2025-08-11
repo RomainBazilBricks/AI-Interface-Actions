@@ -34,7 +34,13 @@ class Settings(BaseSettings):
     # Configuration Manus.ai
     manus_base_url: str = Field(default="https://www.manus.ai", description="URL de base de Manus.ai")
     
-    # Session Manus.ai via variables d'environnement (optionnel, alternative au fichier session_state.json)
+    # API Credentials externe
+    credentials_api_url: str = Field(default="http://localhost:3001/api/ai-credentials", description="URL de l'API de gestion des credentials")
+    credentials_api_token: str = Field(default="", description="Token JWT pour l'API de credentials")
+    credentials_api_timeout: int = Field(default=30, description="Timeout API en secondes")
+    credentials_user_identifier: str = Field(default="romain.bazil@bricks.co", description="Identifiant utilisateur pour récupérer les credentials")
+    
+    # Session Manus.ai via variables d'environnement (FALLBACK si API non disponible)
     manus_session_token: str = Field(default="", description="Token de session Manus.ai extrait du navigateur")
     manus_auth_token: str = Field(default="", description="Token d'authentification Manus.ai")
     manus_user_id: str = Field(default="", description="ID utilisateur Manus.ai")

@@ -100,7 +100,7 @@ class BrowserAutomation:
                     "user_agent": context_options["user_agent"],
                     "locale": context_options["locale"],
                     "timezone_id": context_options["timezone_id"],
-                    "storage_state": self._get_storage_state()
+                    "storage_state": await self._get_storage_state()
                 }
                 
                 # Ajouter viewport seulement s'il est défini
@@ -148,13 +148,36 @@ class BrowserAutomation:
         except Exception as e:
             logger.error("Erreur lors du nettoyage", error=str(e))
     
-    def _get_storage_state(self) -> Optional[Dict[str, Any]]:
+    async def _get_storage_state(self) -> Optional[Dict[str, Any]]:
         """
-        Récupère l'état de stockage depuis les variables d'environnement ou le fichier
-        Priorité : Variables d'environnement > Fichier session_state.json
+        Récupère l'état de stockage depuis l'API, les variables d'environnement ou le fichier
+        Priorité : API > Variables d'environnement > Fichier session_state.json
         """
         try:
-            # Option 1 : Variables d'environnement
+            # Option 1 : API de credentials externe
+            try:
+                from ai_interface_actions.credentials_client import credentials_client
+                
+                if credentials_client.is_configured():
+                    logger.info("Tentative de récupération depuis l'API de credentials")
+                    
+                    credential = await credentials_client.get_credential_for_platform(
+                        platform="manus",
+                        user_identifier=settings.credentials_user_identifier
+                    )
+                    
+                    if credential:
+                        storage_state = credentials_client.get_storage_state_from_credential(credential)
+                        if storage_state:
+                            logger.info("✅ Session récupérée depuis l'API de credentials")
+                            return storage_state
+                    
+                    logger.info("Aucun credential trouvé dans l'API, fallback vers les variables d'environnement")
+                
+            except Exception as e:
+                logger.warning("Erreur lors de l'accès à l'API de credentials, fallback", error=str(e))
+            
+            # Option 2 : Variables d'environnement (FALLBACK)
             if settings.manus_cookies or settings.manus_session_token:
                 logger.info("Utilisation des variables d'environnement pour la session")
                 
@@ -207,12 +230,12 @@ class BrowserAutomation:
                 
                 return storage_state
             
-            # Option 2 : Fichier session_state.json
+            # Option 3 : Fichier session_state.json (FALLBACK)
             elif Path("session_state.json").exists():
                 logger.info("Utilisation du fichier session_state.json")
                 return "session_state.json"
             
-            # Option 3 : Aucune session
+            # Option 4 : Aucune session
             else:
                 logger.info("Aucune session configurée")
                 return None
