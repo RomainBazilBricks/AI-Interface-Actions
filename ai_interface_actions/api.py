@@ -18,7 +18,6 @@ from ai_interface_actions.models import (
 from ai_interface_actions.task_manager import task_manager
 from ai_interface_actions.browser_automation import browser_manager
 from ai_interface_actions.admin_routes import router as admin_router
-from ai_interface_actions.admin_web import router as admin_web_router
 
 # Configuration du logging
 structlog.configure(
@@ -123,7 +122,6 @@ app.add_middleware(
 
 # Inclure les routes d'administration
 app.include_router(admin_router)
-app.include_router(admin_web_router)
 
 
 @app.get("/", response_model=Dict[str, str])
