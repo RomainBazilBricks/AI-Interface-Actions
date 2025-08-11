@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  ai-interface-actions:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-interface-actions
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      # Configuration API
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DEBUG=${DEBUG:-false}
+      - API_SECRET_KEY=${API_SECRET_KEY:-dev-secret-key}
+      
+      # Configuration Playwright
+      - HEADLESS=${HEADLESS:-true}
+      - BROWSER_TIMEOUT=${BROWSER_TIMEOUT:-30000}
+      - PAGE_TIMEOUT=${PAGE_TIMEOUT:-15000}
+      
+      # Configuration Manus.ai (à définir dans .env)
+      - MANUS_BASE_URL=${MANUS_BASE_URL:-https://www.manus.ai}
+      - MANUS_LOGIN_EMAIL=${MANUS_LOGIN_EMAIL}
+      - MANUS_LOGIN_PASSWORD=${MANUS_LOGIN_PASSWORD}
+      
+      # Sécurité et rate limiting
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-10}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Persistance des logs
+      - ./logs:/app/logs
+      # Configuration locale (optionnel)
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Limites de ressources
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    # Configuration réseau
+    networks:
+      - ai-interface-network
+
+  # Service de monitoring (optionnel)
+  watchtower:
+    image: containrrr/watchtower
+    container_name: ai-interface-watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600  # Vérification toutes les heures
+      - WATCHTOWER_INCLUDE_STOPPED=true
+    restart: unless-stopped
+    networks:
+      - ai-interface-network
+    profiles:
+      - monitoring
+
+  # Reverse proxy avec Nginx (optionnel)
+  nginx:
+    image: nginx:alpine
+    container_name: ai-interface-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/ssl/certs:ro
+    depends_on:
+      - ai-interface-actions
+    restart: unless-stopped
+    networks:
+      - ai-interface-network
+    profiles:
+      - production
+
+networks:
+  ai-interface-network:
+    driver: bridge
+
+volumes:
+  logs:
+    driver: local 

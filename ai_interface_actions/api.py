@@ -1,0 +1,545 @@
+"""
+API FastAPI pour l'automatisation des plateformes IA
+"""
+import asyncio
+import time
+from contextlib import asynccontextmanager
+from typing import Dict, Any
+
+import structlog
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+
+from ai_interface_actions import __version__
+from ai_interface_actions.config import settings
+from ai_interface_actions.models import (
+    MessageRequest, MessageResponse, TaskStatusResponse, HealthResponse, TaskStatus
+)
+from ai_interface_actions.task_manager import task_manager
+from ai_interface_actions.browser_automation import browser_manager
+from ai_interface_actions.admin_routes import router as admin_router
+
+# Configuration du logging
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger(__name__)
+
+# Variable pour tracker le temps de démarrage
+app_start_time = time.time()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gestionnaire du cycle de vie de l'application"""
+    # Démarrage
+    logger.info("Démarrage de l'application AI Interface Actions")
+    
+    try:
+        # Initialisation du navigateur
+        await browser_manager.initialize()
+        logger.info("Navigateur initialisé avec succès")
+    except Exception as e:
+        logger.error("Erreur lors de l'initialisation du navigateur", error=str(e))
+        # L'application peut fonctionner sans navigateur pour les endpoints de santé
+    
+    yield
+    
+    # Arrêt
+    logger.info("Arrêt de l'application")
+    try:
+        await browser_manager.cleanup()
+        logger.info("Ressources nettoyées avec succès")
+    except Exception as e:
+        logger.error("Erreur lors du nettoyage", error=str(e))
+
+
+# Création de l'application FastAPI
+app = FastAPI(
+    title="AI Interface Actions",
+    description="Outil d'automatisation pour les plateformes IA via leur interface web",
+    version=__version__,
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# Middleware personnalisé pour gérer CORS avec ngrok
+@app.middleware("http")
+async def cors_handler(request: Request, call_next):
+    # Gérer les requêtes OPTIONS (preflight) explicitement
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        return response
+    
+    # Traiter la requête normale
+    response = await call_next(request)
+    
+    # Ajouter les headers CORS à toutes les réponses
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
+
+# Configuration CORS - Compatible avec ngrok et développement
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Autorise toutes les origines
+    allow_credentials=False,  # Désactiver pour éviter les conflits avec allow_origins=["*"]
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"],
+    allow_headers=[
+        "*",
+        "Accept",
+        "Accept-Language", 
+        "Content-Type",
+        "Content-Language",
+        "Authorization",
+        "X-Requested-With",
+        "ngrok-skip-browser-warning",  # Header spécifique à ngrok
+    ],
+    expose_headers=["*"],
+    max_age=3600,  # Cache preflight pendant 1 heure
+)
+
+# Inclure les routes d'administration
+app.include_router(admin_router)
+
+
+@app.get("/", response_model=Dict[str, str])
+async def root():
+    """Endpoint racine"""
+    return {
+        "message": "AI Interface Actions API",
+        "version": __version__,
+        "docs": "/docs"
+    }
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health_check():
+    """Vérification de l'état de santé de l'API"""
+    try:
+        browser_ready = browser_manager.is_initialized
+        uptime = time.time() - app_start_time
+        
+        return HealthResponse(
+            status="healthy" if browser_ready else "degraded",
+            version=__version__,
+            browser_ready=browser_ready,
+            uptime_seconds=uptime
+        )
+    except Exception as e:
+        logger.error("Erreur lors de la vérification de santé", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/send-message", response_model=MessageResponse)
+async def send_message(request: MessageRequest, background_tasks: BackgroundTasks):
+    """
+    Envoie un message à une plateforme IA
+    
+    Ce endpoint crée une tâche en arrière-plan et retourne immédiatement un ID de tâche.
+    Utilisez l'endpoint /task/{task_id} pour suivre le progrès.
+    """
+    try:
+        logger.info("Nouvelle demande d'envoi de message", 
+                   platform=request.platform, 
+                   message_length=len(request.message))
+        
+        # Validation des paramètres
+        if not request.message.strip():
+            raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
+        
+        if request.platform != "manus":
+            raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
+        
+        # Création de la tâche
+        task_params = {
+            "message": request.message,
+            "platform": request.platform,
+            "conversation_url": request.conversation_url,
+            "wait_for_response": request.wait_for_response,
+            "timeout_seconds": request.timeout_seconds
+        }
+        
+        task_id = task_manager.create_task("send_message", task_params)
+        
+        # Démarrage de la tâche en arrière-plan
+        background_tasks.add_task(task_manager.execute_task, task_id)
+        
+        logger.info("Tâche créée et démarrée", task_id=task_id)
+        
+        return MessageResponse(
+            task_id=task_id,
+            status=TaskStatus.PENDING,
+            message_sent=request.message,
+            conversation_url=request.conversation_url if request.conversation_url else None,
+            ai_response=None,
+            execution_time_seconds=None,
+            error_message=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de la création de la tâche", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/task/{task_id}", response_model=TaskStatusResponse)
+async def get_task_status(task_id: str):
+    """
+    Récupère le statut d'une tâche
+    
+    Permet de suivre le progrès d'une tâche d'envoi de message.
+    """
+    try:
+        task_status = task_manager.get_task_status(task_id)
+        
+        if not task_status:
+            raise HTTPException(status_code=404, detail=f"Tâche '{task_id}' introuvable")
+        
+        return TaskStatusResponse(**task_status)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de la récupération du statut", task_id=task_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/send-message-sync", response_model=MessageResponse)
+async def send_message_sync(request: MessageRequest):
+    """
+    Envoie un message de manière synchrone (attend la réponse)
+    
+    ⚠️ Attention: Cet endpoint peut prendre du temps à répondre (jusqu'à timeout_seconds).
+    Utilisez plutôt l'endpoint asynchrone /send-message pour de meilleures performances.
+    """
+    try:
+        logger.info("Demande d'envoi synchrone", 
+                   platform=request.platform, 
+                   message_length=len(request.message))
+        
+        # Validation des paramètres
+        if not request.message.strip():
+            raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
+        
+        if request.platform != "manus":
+            raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
+        
+        # Création et exécution immédiate de la tâche
+        task_params = {
+            "message": request.message,
+            "platform": request.platform,
+            "conversation_url": request.conversation_url,
+            "wait_for_response": request.wait_for_response,
+            "timeout_seconds": request.timeout_seconds
+        }
+        
+        task_id = task_manager.create_task("send_message", task_params)
+        
+        # Exécution synchrone
+        await task_manager.execute_task(task_id)
+        
+        # Récupération du résultat
+        task = task_manager.get_task(task_id)
+        if not task:
+            raise HTTPException(status_code=500, detail="Erreur lors de la récupération de la tâche")
+        
+        if task.status == TaskStatus.FAILED:
+            raise HTTPException(status_code=500, detail=task.error_message or "Échec de la tâche")
+        
+        result = task.result or {}
+        
+        return MessageResponse(
+            task_id=task_id,
+            status=task.status,
+            message_sent=request.message,
+            conversation_url=result.get("conversation_url"),
+            ai_response=result.get("ai_response"),
+            execution_time_seconds=task.execution_time_seconds,
+            error_message=task.error_message
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de l'envoi synchrone", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.delete("/task/{task_id}")
+async def cancel_task(task_id: str):
+    """
+    Annule une tâche en cours (si possible)
+    
+    Note: Les tâches déjà en cours d'exécution ne peuvent pas être annulées.
+    """
+    try:
+        task = task_manager.get_task(task_id)
+        
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Tâche '{task_id}' introuvable")
+        
+        if task.status in [TaskStatus.COMPLETED, TaskStatus.FAILED]:
+            raise HTTPException(status_code=400, detail="La tâche est déjà terminée")
+        
+        if task.status == TaskStatus.RUNNING:
+            # Essayer d'annuler la tâche asyncio si elle existe
+            async_task = task_manager.running_tasks.get(task_id)
+            if async_task and not async_task.done():
+                async_task.cancel()
+                task.update_status(TaskStatus.FAILED, "Tâche annulée par l'utilisateur")
+                logger.info("Tâche annulée", task_id=task_id)
+                return {"message": "Tâche annulée avec succès"}
+            else:
+                raise HTTPException(status_code=400, detail="Impossible d'annuler la tâche en cours")
+        
+        # Tâche en attente, on peut l'annuler
+        task.update_status(TaskStatus.FAILED, "Tâche annulée par l'utilisateur")
+        logger.info("Tâche en attente annulée", task_id=task_id)
+        
+        return {"message": "Tâche annulée avec succès"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de l'annulation", task_id=task_id, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/setup-login")
+async def setup_manual_login(background_tasks: BackgroundTasks):
+    """
+    Ouvre une page pour la connexion manuelle à Manus.ai
+    
+    Utilisez cet endpoint pour la première configuration.
+    La session sera sauvegardée et réutilisée pendant 30 jours.
+    """
+    try:
+        logger.info("Demande d'ouverture de page de connexion manuelle")
+        
+        # Ouvrir la page en mode visible
+        url = await browser_manager.open_login_page()
+        
+        # Démarrer l'attente de connexion en arrière-plan
+        background_tasks.add_task(browser_manager.wait_for_login_and_save_session, 10)
+        
+        return {
+            "message": "Page de connexion ouverte dans votre navigateur",
+            "url": url,
+            "status": "waiting_for_login",
+            "instructions": [
+                "1. ✅ Une fenêtre Manus.ai s'est ouverte dans votre navigateur",
+                "2. 👤 Connectez-vous avec vos identifiants Manus.ai", 
+                "3. 💾 La session sera automatiquement détectée et sauvegardée",
+                "4. ❌ Vous pouvez fermer la fenêtre après connexion",
+                "5. 🚀 Vous pourrez ensuite utiliser l'API pendant 30 jours"
+            ],
+            "timeout_minutes": 10
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors de l'ouverture de la page de connexion", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/send-message-quick")
+async def send_message_quick_url(request: MessageRequest):
+    """
+    Envoie un message et retourne rapidement l'URL de conversation
+    
+    Idéal pour récupérer l'URL d'une nouvelle conversation sans attendre la réponse IA.
+    La tâche continue en arrière-plan pour la réponse complète.
+    """
+    try:
+        logger.info("Demande d'envoi rapide avec URL", 
+                   platform=request.platform, 
+                   has_conversation_url=bool(request.conversation_url))
+        
+        # Validation des paramètres
+        if not request.message.strip():
+            raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
+        
+        if request.platform != "manus":
+            raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
+        
+        # Si URL de conversation fournie, pas besoin de récupération rapide
+        if request.conversation_url and request.conversation_url.strip():
+            logger.info("URL de conversation déjà fournie, lancement tâche normale")
+            
+            # Lancer la tâche normale en arrière-plan
+            task_params = {
+                "message": request.message,
+                "platform": request.platform,
+                "conversation_url": request.conversation_url,
+                "wait_for_response": request.wait_for_response,
+                "timeout_seconds": request.timeout_seconds
+            }
+            
+            task_id = task_manager.create_task("send_message", task_params)
+            asyncio.create_task(task_manager.execute_task(task_id))
+            
+            return {
+                "task_id": task_id,
+                "status": "pending",
+                "message_sent": request.message,
+                "conversation_url": request.conversation_url,
+                "quick_response": True,
+                "message": "Message envoyé dans conversation existante"
+            }
+        
+        else:
+            # Nouvelle conversation : récupération rapide de l'URL
+            logger.info("Nouvelle conversation, récupération rapide de l'URL")
+            
+            conversation_url = await browser_manager.get_conversation_url_quickly(
+                message=request.message,
+                conversation_url=request.conversation_url,
+                max_wait_seconds=8
+            )
+            
+            # Lancer la tâche complète en arrière-plan pour la réponse IA
+            if request.wait_for_response:
+                task_params = {
+                    "message": request.message,
+                    "platform": request.platform,
+                    "conversation_url": conversation_url,
+                    "wait_for_response": True,
+                    "timeout_seconds": request.timeout_seconds
+                }
+                
+                task_id = task_manager.create_task("send_message", task_params)
+                asyncio.create_task(task_manager.execute_task(task_id))
+            else:
+                task_id = None
+            
+            return {
+                "task_id": task_id,
+                "status": "url_ready",
+                "message_sent": request.message,
+                "conversation_url": conversation_url,
+                "quick_response": True,
+                "message": f"Nouvelle conversation créée. URL disponible immédiatement.",
+                "wait_for_ai_response": request.wait_for_response
+            }
+        
+    except Exception as e:
+        logger.error("Erreur lors de l'envoi rapide", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/session-status")
+async def check_session_status():
+    """
+    Vérifie le statut de la session Manus.ai
+    """
+    try:
+        from pathlib import Path
+        session_file = Path("session_state.json")
+        
+        if session_file.exists():
+            # Lire la date de modification du fichier
+            import os
+            import datetime
+            
+            mtime = os.path.getmtime(session_file)
+            last_updated = datetime.datetime.fromtimestamp(mtime)
+            
+            # Calculer l'âge de la session
+            age_days = (datetime.datetime.now() - last_updated).days
+            
+            return {
+                "session_exists": True,
+                "last_updated": last_updated.isoformat(),
+                "age_days": age_days,
+                "expires_in_days": max(0, 30 - age_days),
+                "status": "valid" if age_days < 30 else "expired",
+                "message": "Session active" if age_days < 30 else "Session expirée - reconnexion requise"
+            }
+        else:
+            return {
+                "session_exists": False,
+                "status": "no_session",
+                "message": "Aucune session sauvegardée - utilisez /setup-login pour vous connecter"
+            }
+            
+    except Exception as e:
+        logger.error("Erreur lors de la vérification de session", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/tasks", response_model=Dict[str, Any])
+async def list_tasks(limit: int = 50, status_filter: str = None):
+    """
+    Liste les tâches récentes
+    
+    Args:
+        limit: Nombre maximum de tâches à retourner (défaut: 50)
+        status_filter: Filtrer par statut (pending, running, completed, failed)
+    """
+    try:
+        tasks = []
+        count = 0
+        
+        # Filtrer et limiter les tâches
+        for task_id, task in task_manager.tasks.items():
+            if status_filter and task.status != status_filter:
+                continue
+            
+            if count >= limit:
+                break
+            
+            tasks.append({
+                "task_id": task_id,
+                "status": task.status,
+                "task_type": task.task_type,
+                "created_at": task.created_at.isoformat(),
+                "updated_at": task.updated_at.isoformat(),
+                "execution_time_seconds": task.execution_time_seconds
+            })
+            count += 1
+        
+        # Trier par date de création (plus récent en premier)
+        tasks.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        return {
+            "tasks": tasks,
+            "total": len(tasks),
+            "running_tasks": len(task_manager.running_tasks)
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors de la liste des tâches", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "ai_interface_actions.api:app",
+        host=settings.api_host,
+        port=settings.api_port,
+        reload=settings.debug,
+        log_level=settings.log_level.lower()
+    ) 

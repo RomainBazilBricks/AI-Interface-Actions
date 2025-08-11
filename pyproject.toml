@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-interface-actions"
+version = "0.1.0"
+description = "Outil d'automatisation pour les plateformes IA via leur interface web"
+authors = [
+    {name = "Romain", email = "romain@example.com"},
+]
+dependencies = [
+    "fastapi==0.104.1",
+    "uvicorn[standard]==0.24.0",
+    "playwright==1.40.0",
+    "pydantic==2.5.0",
+    "pydantic-settings==2.1.0",
+    "structlog==23.2.0",
+    "python-multipart==0.0.6",
+    "aiofiles==23.2.0",
+    "python-dotenv==1.0.0",
+]
+requires-python = ">=3.11"
+
+[project.scripts]
+ai-interface-actions = "ai_interface_actions.main:main" 
