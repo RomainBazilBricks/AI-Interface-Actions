@@ -69,8 +69,13 @@ class BrowserAutomation:
             # Utiliser contexte persistant (profil utilisateur) ou session temporaire
             if settings.use_persistent_context:
                 # Utiliser le répertoire de données utilisateur pour persistance RÉELLE
-                # Dans un container Docker, utiliser /app au lieu de home pour éviter les problèmes de permissions
-                user_data_dir = Path("/app") / ".ai-interface-actions" / "browser-data"
+                # Détecter si on est dans un container Docker ou en local
+                if Path("/app").exists():
+                    # Container Docker
+                    user_data_dir = Path("/app") / ".ai-interface-actions" / "browser-data"
+                else:
+                    # Environnement local
+                    user_data_dir = Path.home() / ".ai-interface-actions" / "browser-data"
                 user_data_dir.mkdir(parents=True, exist_ok=True)
                 
                 # IMPORTANT: launch_persistent_context utilise le profil utilisateur

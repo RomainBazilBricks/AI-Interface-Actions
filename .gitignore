@@ -127,7 +127,7 @@ logs/
 *.log
 
 # Session state (peut contenir des données sensibles)
-session_state.json
+# session_state.json  # Temporarily commented to commit the session file
 
 # IDE
 .vscode/
