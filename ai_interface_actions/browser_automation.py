@@ -2,6 +2,7 @@
 Module d'automatisation du navigateur avec Playwright
 """
 import asyncio
+import os
 import structlog
 import json
 from pathlib import Path
@@ -80,20 +81,36 @@ class BrowserAutomation:
                 user_data_dir.mkdir(parents=True, exist_ok=True)
                 
                 # IMPORTANT: launch_persistent_context utilise le profil utilisateur
-                self.context = await self.playwright.chromium.launch_persistent_context(
-                    user_data_dir=str(user_data_dir),
-                    headless=use_headless,
+                persistent_options = {
+                    "user_data_dir": str(user_data_dir),
+                    "headless": use_headless,
                     **context_options
-                )
+                }
+                
+                # Utiliser Chromium de Nix si disponible
+                chromium_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+                if chromium_path and chromium_path != "0":
+                    persistent_options["executable_path"] = chromium_path
+                    logger.info(f"Utilisation de Chromium personnalisé pour contexte persistant: {chromium_path}")
+                
+                self.context = await self.playwright.chromium.launch_persistent_context(**persistent_options)
                 # Pas de browser séparé avec launch_persistent_context
                 self.browser = None
                 logger.info("Contexte persistant créé avec profil utilisateur (PAS navigation privée)")
             else:
                 # Mode session temporaire (navigation privée avec sauvegarde)
-                self.browser = await self.playwright.chromium.launch(
-                    headless=use_headless,
-                    args=context_options["args"]
-                )
+                launch_options = {
+                    "headless": use_headless,
+                    "args": context_options["args"]
+                }
+                
+                # Utiliser Chromium de Nix si disponible
+                chromium_path = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH")
+                if chromium_path and chromium_path != "0":
+                    launch_options["executable_path"] = chromium_path
+                    logger.info(f"Utilisation de Chromium personnalisé: {chromium_path}")
+                
+                self.browser = await self.playwright.chromium.launch(**launch_options)
                 
                 # Préparer les options pour new_context
                 new_context_options = {
