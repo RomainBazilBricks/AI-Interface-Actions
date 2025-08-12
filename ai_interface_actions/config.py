@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     credentials_api_token: str = Field(default="", description="Clé API (X-API-Key) pour l'authentification avec l'API de credentials")
     credentials_api_timeout: int = Field(default=30, description="Timeout pour les requêtes vers l'API de credentials (secondes)")
     
+    # Session refresh périodique
+    session_refresh_enabled: bool = Field(default=False, description="Activer le refresh automatique de session")
+    session_refresh_interval_hours: int = Field(default=72, description="Intervalle de refresh de session (heures)")
+    session_manual_refresh_url: str = Field(default="", description="URL webhook pour demander un refresh manuel")
+    
     # Fallback: Variables d'environnement directes pour Manus.ai (si API credentials indisponible)
     manus_cookies: str = Field(default="", description="Cookies Manus.ai au format JSON (fallback)")
     manus_session_token: str = Field(default="", description="Token de session Manus.ai (fallback)")

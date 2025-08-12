@@ -633,6 +633,113 @@ async def list_tasks(limit: int = 50, status_filter: str = None):
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
+@app.get("/debug/playwright-test")
+async def debug_playwright_cookies():
+    """
+    Test approfondi de l'application des cookies par Playwright
+    """
+    try:
+        from ai_interface_actions.credentials_client import credentials_client
+        
+        if not credentials_client.is_configured():
+            return {"error": "API credentials non configurée"}
+        
+        user_email = "romain.bazil@bricks.co"
+        credential = await credentials_client.get_credential_for_platform("manus", user_email)
+        
+        if not credential:
+            return {"error": "Aucun credential trouvé"}
+        
+        storage_state = credentials_client.get_storage_state_from_credential(credential)
+        if not storage_state:
+            return {"error": "Impossible de convertir le credential"}
+        
+        # Test Playwright avec debugging détaillé
+        from playwright.async_api import async_playwright
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(storage_state=storage_state)
+            page = await context.new_page()
+            
+            # 1. Vérifier les cookies AVANT navigation
+            cookies_before = await context.cookies()
+            
+            # 2. Naviguer vers Manus.im
+            await page.goto("https://www.manus.im/app")
+            await page.wait_for_load_state("networkidle")
+            
+            # 3. Vérifier les cookies APRÈS navigation
+            cookies_after = await context.cookies()
+            
+            # 4. Vérifier le localStorage
+            local_storage = await page.evaluate("""
+                () => {
+                    const items = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        items[key] = localStorage.getItem(key);
+                    }
+                    return items;
+                }
+            """)
+            
+            # 5. Vérifier l'URL finale (login ou app ?)
+            final_url = page.url
+            
+            # 6. Vérifier si des éléments de connexion sont présents
+            is_logged_in = await page.evaluate("""
+                () => {
+                    // Chercher des indicateurs de session active
+                    const indicators = [
+                        'div[data-testid="user-menu"]',
+                        '.user-avatar',
+                        '[data-testid="chat-input"]',
+                        'button[aria-label*="profile"]'
+                    ];
+                    
+                    return indicators.some(selector => document.querySelector(selector) !== null);
+                }
+            """)
+            
+            await browser.close()
+            
+            return {
+                "status": "debug_complete",
+                "storage_state_applied": {
+                    "cookies_count": len(storage_state.get("cookies", [])),
+                    "origins_count": len(storage_state.get("origins", []))
+                },
+                "playwright_results": {
+                    "cookies_before_nav": len(cookies_before),
+                    "cookies_after_nav": len(cookies_after),
+                    "local_storage_items": len(local_storage),
+                    "final_url": final_url,
+                    "appears_logged_in": is_logged_in
+                },
+                "cookies_details": {
+                    "before": [{"name": c["name"], "domain": c["domain"]} for c in cookies_before],
+                    "after": [{"name": c["name"], "domain": c["domain"]} for c in cookies_after]
+                },
+                "local_storage_keys": list(local_storage.keys()) if local_storage else [],
+                "diagnosis": {
+                    "cookies_applied": len(cookies_before) > 0,
+                    "cookies_persisted": len(cookies_after) > 0,
+                    "local_storage_applied": len(local_storage) > 0,
+                    "likely_issue": (
+                        "Cookies non appliqués" if len(cookies_before) == 0 
+                        else "Cookies perdus après navigation" if len(cookies_after) == 0
+                        else "localStorage manquant" if len(local_storage) == 0
+                        else "Session valide mais non reconnue par Manus.im"
+                    )
+                }
+            }
+            
+    except Exception as e:
+        logger.error("Erreur lors du debug Playwright", error=str(e))
+        return {"error": f"Erreur debug: {str(e)}"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
