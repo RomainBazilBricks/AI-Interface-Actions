@@ -252,13 +252,19 @@ class CredentialsAPIClient:
                 "origins": []
             }
             
-            # Convertir les cookies avec le bon domaine manus.im
+            # Convertir les cookies avec les bons domaines
             cookies_data = session_data.get("cookies", {})
             for name, value in cookies_data.items():
+                # Déterminer le bon domaine selon le cookie
+                if "intercom" in name.lower():
+                    domain = ".manus.ai"  # Intercom reste sur .manus.ai
+                else:
+                    domain = ".manus.im"  # Les autres cookies sur .manus.im
+                
                 storage_state["cookies"].append({
                     "name": name,
                     "value": value,
-                    "domain": ".manus.im",  # Tous les cookies sur .manus.im
+                    "domain": domain,
                     "path": "/",
                     "httpOnly": name in ["session_id", "session_token", "auth_token"],
                     "secure": True,
