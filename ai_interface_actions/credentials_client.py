@@ -3,6 +3,7 @@ Client API pour communiquer avec l'API de gestion des credentials IA
 """
 import httpx
 import json
+import base64
 import structlog
 from typing import Optional, Dict, Any, List
 from pathlib import Path
@@ -17,13 +18,29 @@ class CredentialsAPIClient:
     
     def __init__(self):
         self.base_url = settings.credentials_api_url
-        self.api_token = settings.credentials_api_token
+        self.api_key = settings.credentials_api_token  # Maintenant utilisé comme clé API
         self.timeout = settings.credentials_api_timeout
         
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_token}" if self.api_token else ""
+            "X-API-Key": self.api_key if self.api_key else ""  # Utilisation du header X-API-Key
         }
+    
+    def _encode_user_identifier(self, user_identifier: str) -> str:
+        """
+        Encode l'identifiant utilisateur en base64 pour l'URL
+        
+        Args:
+            user_identifier: Email ou identifiant utilisateur
+            
+        Returns:
+            Identifiant encodé en base64
+        """
+        try:
+            return base64.b64encode(user_identifier.encode()).decode()
+        except Exception as e:
+            logger.error("Erreur lors de l'encodage de l'identifiant", error=str(e))
+            return user_identifier
     
     async def get_credential_for_platform(self, platform: str, user_identifier: str) -> Optional[Dict[str, Any]]:
         """
@@ -37,11 +54,18 @@ class CredentialsAPIClient:
             Données du credential ou None si non trouvé
         """
         try:
-            if not self.base_url or not self.api_token:
+            if not self.base_url or not self.api_key:
                 logger.warning("API credentials non configurée, utilisation du fallback local")
                 return None
             
-            url = f"{self.base_url}/platform/{platform}/user/{user_identifier}"
+            # Encoder l'email en base64 pour l'URL
+            encoded_user = self._encode_user_identifier(user_identifier)
+            url = f"{self.base_url}/platform/{platform}/user/{encoded_user}"
+            
+            logger.info("Tentative de récupération credential", 
+                       url=url, 
+                       platform=platform, 
+                       user_identifier=user_identifier)
             
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url, headers=self.headers)
@@ -56,6 +80,10 @@ class CredentialsAPIClient:
                 elif response.status_code == 404:
                     logger.info("Aucun credential trouvé pour cette plateforme/utilisateur",
                               platform=platform, user_identifier=user_identifier)
+                    return None
+                elif response.status_code == 401:
+                    logger.error("Authentification échouée - vérifiez la clé API",
+                               status_code=response.status_code)
                     return None
                 else:
                     logger.error("Erreur API lors de la récupération du credential",
@@ -78,7 +106,7 @@ class CredentialsAPIClient:
             Credential créé ou None si erreur
         """
         try:
-            if not self.base_url or not self.api_token:
+            if not self.base_url or not self.api_key:
                 logger.warning("API credentials non configurée")
                 return None
             
@@ -115,7 +143,7 @@ class CredentialsAPIClient:
             Credential mis à jour ou None si erreur
         """
         try:
-            if not self.base_url or not self.api_token:
+            if not self.base_url or not self.api_key:
                 logger.warning("API credentials non configurée")
                 return None
             
@@ -160,7 +188,7 @@ class CredentialsAPIClient:
             Liste des credentials
         """
         try:
-            if not self.base_url or not self.api_token:
+            if not self.base_url or not self.api_key:
                 logger.warning("API credentials non configurée")
                 return []
             
@@ -227,7 +255,7 @@ class CredentialsAPIClient:
                     "value": value,
                     "domain": ".manus.ai",
                     "path": "/",
-                    "httpOnly": name in ["session_id", "auth_token"],
+                    "httpOnly": name in ["session_id", "session_token", "auth_token"],
                     "secure": True,
                     "sameSite": "Lax"
                 })
@@ -242,6 +270,13 @@ class CredentialsAPIClient:
                     ]
                 }]
             
+            # Convertir le sessionStorage si présent
+            session_storage = session_data.get("session_storage", {})
+            if session_storage and storage_state["origins"]:
+                storage_state["origins"][0]["sessionStorage"] = [
+                    {"name": k, "value": v} for k, v in session_storage.items()
+                ]
+            
             logger.info("Storage state généré depuis credential",
                        cookies_count=len(storage_state["cookies"]),
                        origins_count=len(storage_state["origins"]))
@@ -254,7 +289,7 @@ class CredentialsAPIClient:
     
     def is_configured(self) -> bool:
         """Vérifie si l'API est configurée"""
-        return bool(self.base_url and self.api_token)
+        return bool(self.base_url and self.api_key)
 
 
 # Instance globale du client

@@ -34,25 +34,22 @@ class Settings(BaseSettings):
     # Configuration Manus.ai
     manus_base_url: str = Field(default="https://www.manus.ai", description="URL de base de Manus.ai")
     
-    # API Credentials externe
+    # API Credentials externe (votre interface web)
     credentials_api_url: str = Field(default="http://localhost:3001/api/ai-credentials", description="URL de l'API de gestion des credentials")
-    credentials_api_token: str = Field(default="", description="Token JWT pour l'API de credentials")
-    credentials_api_timeout: int = Field(default=30, description="Timeout API en secondes")
-    credentials_user_identifier: str = Field(default="romain.bazil@bricks.co", description="Identifiant utilisateur pour récupérer les credentials")
+    credentials_api_token: str = Field(default="", description="Clé API (X-API-Key) pour l'authentification avec l'API de credentials")
+    credentials_api_timeout: int = Field(default=30, description="Timeout pour les requêtes vers l'API de credentials (secondes)")
     
-    # Session Manus.ai via variables d'environnement (FALLBACK si API non disponible)
-    manus_session_token: str = Field(default="", description="Token de session Manus.ai extrait du navigateur")
-    manus_auth_token: str = Field(default="", description="Token d'authentification Manus.ai")
-    manus_user_id: str = Field(default="", description="ID utilisateur Manus.ai")
-    manus_csrf_token: str = Field(default="", description="Token CSRF Manus.ai")
-    manus_cookies: str = Field(default="", description="Cookies Manus.ai au format JSON")
-    manus_local_storage: str = Field(default="", description="LocalStorage Manus.ai au format JSON")
-    
-    # Sécurité et rate limiting
-    rate_limit_per_minute: int = Field(default=10, description="Limite de requêtes par minute")
+    # Fallback: Variables d'environnement directes pour Manus.ai (si API credentials indisponible)
+    manus_cookies: str = Field(default="", description="Cookies Manus.ai au format JSON (fallback)")
+    manus_session_token: str = Field(default="", description="Token de session Manus.ai (fallback)")
+    manus_auth_token: str = Field(default="", description="Token d'authentification Manus.ai (fallback)")
+    manus_local_storage: str = Field(default="", description="localStorage Manus.ai au format JSON (fallback)")
     
     # Logging
-    log_level: str = Field(default="INFO", description="Niveau de log")
+    log_level: str = Field(default="INFO", description="Niveau de logging (DEBUG, INFO, WARNING, ERROR)")
+    
+    # Rate limiting
+    rate_limit_per_minute: int = Field(default=10, description="Limite de requêtes par minute par IP")
 
 
 # Instance globale des paramètres

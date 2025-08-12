@@ -149,27 +149,25 @@ class BrowserAutomation:
             logger.error("Erreur lors du nettoyage", error=str(e))
     
     async def _get_storage_state(self) -> Optional[Dict[str, Any]]:
-        """
-        Récupère l'état de stockage depuis l'API, les variables d'environnement ou le fichier
-        Priorité : API > Variables d'environnement > Fichier session_state.json
-        """
+        """Récupère l'état de session stocké"""
         try:
-            # Option 1 : API de credentials externe
+            # Option 1 : API de credentials externe (PRIORITÉ)
             try:
                 from ai_interface_actions.credentials_client import credentials_client
                 
                 if credentials_client.is_configured():
-                    logger.info("Tentative de récupération depuis l'API de credentials")
+                    logger.info("Tentative de récupération des credentials via API externe")
                     
-                    credential = await credentials_client.get_credential_for_platform(
-                        platform="manus",
-                        user_identifier=settings.credentials_user_identifier
-                    )
+                    # Utiliser l'email par défaut pour récupérer les credentials
+                    user_email = "romain.bazil@bricks.co"  # Peut être configuré via une variable d'environnement
+                    credential = await credentials_client.get_credential_for_platform("manus", user_email)
                     
                     if credential:
                         storage_state = credentials_client.get_storage_state_from_credential(credential)
                         if storage_state:
-                            logger.info("✅ Session récupérée depuis l'API de credentials")
+                            logger.info("Session récupérée depuis l'API de credentials", 
+                                       user_email=user_email,
+                                       cookies_count=len(storage_state.get("cookies", [])))
                             return storage_state
                     
                     logger.info("Aucun credential trouvé dans l'API, fallback vers les variables d'environnement")
@@ -228,20 +226,23 @@ class BrowserAutomation:
                     except json.JSONDecodeError:
                         logger.warning("Format JSON invalide pour manus_local_storage")
                 
-                return storage_state
+                if storage_state["cookies"] or storage_state["origins"]:
+                    logger.info("Session construite depuis les variables d'environnement",
+                               cookies_count=len(storage_state["cookies"]))
+                    return storage_state
             
-            # Option 3 : Fichier session_state.json (FALLBACK)
-            elif Path("session_state.json").exists():
-                logger.info("Utilisation du fichier session_state.json")
-                return "session_state.json"
+            # Option 3 : Fichier de session local
+            session_file = Path("session_state.json")
+            if session_file.exists():
+                logger.info("Chargement de la session depuis le fichier local")
+                with open(session_file, 'r') as f:
+                    return json.load(f)
             
-            # Option 4 : Aucune session
-            else:
-                logger.info("Aucune session configurée")
-                return None
-                
+            logger.info("Aucune session trouvée")
+            return None
+            
         except Exception as e:
-            logger.error("Erreur lors de la récupération de l'état de stockage", error=str(e))
+            logger.error("Erreur lors de la récupération de l'état de session", error=str(e))
             return None
 
     async def ensure_initialized(self, headless_override: bool = None) -> None:
