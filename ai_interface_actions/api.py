@@ -832,6 +832,39 @@ async def debug_environment_variables():
         logger.error("Erreur lors du debug env vars", error=str(e))
         return {"error": f"Erreur debug env: {str(e)}"}
 
+@app.get("/debug/storage-state-test")
+async def debug_storage_state_test():
+    """
+    Test direct de _get_storage_state avec logs détaillés
+    """
+    try:
+        # Tester directement la méthode _get_storage_state
+        storage_state = await browser_manager._get_storage_state()
+        
+        if storage_state:
+            return {
+                "status": "storage_state_found",
+                "cookies_count": len(storage_state.get("cookies", [])),
+                "origins_count": len(storage_state.get("origins", [])),
+                "cookies_sample": [
+                    {"name": c["name"], "domain": c["domain"]} 
+                    for c in storage_state.get("cookies", [])[:3]
+                ],
+                "origins_sample": [
+                    {"origin": o["origin"], "localStorage_count": len(o.get("localStorage", []))} 
+                    for o in storage_state.get("origins", [])[:2]
+                ]
+            }
+        else:
+            return {
+                "status": "no_storage_state",
+                "message": "Aucun storage_state retourné par _get_storage_state"
+            }
+            
+    except Exception as e:
+        logger.error("Erreur lors du test storage state", error=str(e))
+        return {"error": f"Erreur test storage: {str(e)}"}
+
 
 if __name__ == "__main__":
     import uvicorn
