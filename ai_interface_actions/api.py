@@ -551,6 +551,21 @@ async def check_session_status():
             except Exception as e:
                 logger.warning("Erreur lors de la vérification API credentials", error=str(e))
         
+        # Fallback: vérifier les variables d'environnement MANUS_*
+        from ai_interface_actions.config import settings
+        if settings.manus_cookies or settings.manus_session_token:
+            return {
+                "session_exists": True,
+                "status": "valid",
+                "source": "environment_variables",
+                "message": "Session active depuis les variables d'environnement",
+                "config": {
+                    "has_cookies": bool(settings.manus_cookies),
+                    "has_session_token": bool(settings.manus_session_token),
+                    "use_persistent_context": settings.use_persistent_context
+                }
+            }
+        
         # Fallback: vérifier le fichier local
         from pathlib import Path
         session_file = Path("session_state.json")
