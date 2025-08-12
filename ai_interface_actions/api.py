@@ -865,6 +865,83 @@ async def debug_storage_state_test():
         logger.error("Erreur lors du test storage state", error=str(e))
         return {"error": f"Erreur test storage: {str(e)}"}
 
+@app.post("/debug/send-message-with-exact-headers")
+async def debug_send_message_with_exact_headers(request: MessageRequest):
+    """
+    Test avec User-Agent et headers EXACTEMENT comme dans vos données
+    """
+    try:
+        # User-Agent EXACT de vos données
+        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
+        
+        # Forcer l'utilisation du User-Agent exact
+        from playwright.async_api import async_playwright
+        import json
+        
+        # Récupérer le storage state
+        storage_state = await browser_manager._get_storage_state()
+        if not storage_state:
+            return {"error": "Pas de storage state"}
+        
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                storage_state=storage_state,
+                user_agent=user_agent,
+                viewport={'width': 1440, 'height': 900},
+                extra_http_headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                    'Accept-Language': 'fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Ch-Ua': '"Chromium";v="138", "Google Chrome";v="138", "Not=A?Brand";v="99"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"macOS"'
+                }
+            )
+            page = await context.new_page()
+            
+            # Naviguer vers Manus.im
+            await page.goto("https://www.manus.im/app", wait_until="networkidle")
+            await page.wait_for_timeout(3000)
+            
+            final_url = page.url
+            
+            # Vérifier si connecté
+            is_logged_in = await page.evaluate("""
+                () => {
+                    const indicators = [
+                        '[data-testid="chat-input"]',
+                        '.chat-container',
+                        'button[data-testid="new-chat"]',
+                        'textarea[placeholder*="message"]',
+                        'input[placeholder*="message"]'
+                    ];
+                    return indicators.some(selector => document.querySelector(selector) !== null);
+                }
+            """)
+            
+            await browser.close()
+            
+            return {
+                "status": "test_complete",
+                "user_agent": user_agent,
+                "final_url": final_url,
+                "appears_logged_in": is_logged_in,
+                "cookies_applied": len(storage_state.get("cookies", [])),
+                "test_result": "SUCCESS" if is_logged_in else "FAILED",
+                "diagnosis": "Connecté avec succès" if is_logged_in else f"Redirigé vers {final_url}"
+            }
+            
+    except Exception as e:
+        logger.error("Erreur lors du test avec headers exacts", error=str(e))
+        return {"error": f"Erreur test headers: {str(e)}"}
+
 
 if __name__ == "__main__":
     import uvicorn
