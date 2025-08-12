@@ -530,6 +530,28 @@ async def check_session_status():
     Vérifie le statut de la session Manus.ai
     """
     try:
+        from ai_interface_actions.credentials_client import credentials_client
+        
+        # Vérifier d'abord l'API de credentials (priorité)
+        if credentials_client.is_configured():
+            try:
+                user_email = "romain.bazil@bricks.co"
+                credential = await credentials_client.get_credential_for_platform("manus", user_email)
+                
+                if credential:
+                    return {
+                        "session_exists": True,
+                        "status": "valid",
+                        "source": "api_credentials",
+                        "credential_id": credential.get("id"),
+                        "user_email": user_email,
+                        "last_used": credential.get("lastUsedAt"),
+                        "message": "Session active depuis l'API de credentials"
+                    }
+            except Exception as e:
+                logger.warning("Erreur lors de la vérification API credentials", error=str(e))
+        
+        # Fallback: vérifier le fichier local
         from pathlib import Path
         session_file = Path("session_state.json")
         
@@ -546,17 +568,19 @@ async def check_session_status():
             
             return {
                 "session_exists": True,
+                "source": "local_file",
                 "last_updated": last_updated.isoformat(),
                 "age_days": age_days,
                 "expires_in_days": max(0, 30 - age_days),
                 "status": "valid" if age_days < 30 else "expired",
-                "message": "Session active" if age_days < 30 else "Session expirée - reconnexion requise"
+                "message": "Session active (fichier local)" if age_days < 30 else "Session expirée - reconnexion requise"
             }
         else:
             return {
                 "session_exists": False,
                 "status": "no_session",
-                "message": "Aucune session sauvegardée - utilisez /setup-login pour vous connecter"
+                "source": "none",
+                "message": "Aucune session trouvée - utilisez /setup-login pour vous connecter"
             }
             
     except Exception as e:
