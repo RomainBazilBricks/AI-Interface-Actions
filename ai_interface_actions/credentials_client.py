@@ -301,7 +301,11 @@ class CredentialsAPIClient:
     
     def is_configured(self) -> bool:
         """Vérifie si l'API est configurée"""
-        return bool(self.base_url and self.api_key)
+        # Vérifier les variables d'environnement réelles, pas les valeurs par défaut
+        import os
+        actual_url = os.getenv("CREDENTIALS_API_URL")
+        actual_token = os.getenv("CREDENTIALS_API_TOKEN")
+        return bool(actual_url and actual_token)
 
 
 # Instance globale du client
