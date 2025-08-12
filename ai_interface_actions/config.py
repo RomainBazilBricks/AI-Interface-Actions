@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # Configuration Playwright
     headless: bool = Field(default=True, description="Mode headless du navigateur")
     headless_setup: bool = Field(default=False, description="Mode headless pour le setup (False = fenêtre visible)")
-    use_persistent_context: bool = Field(default=True, description="Utiliser un contexte persistant (garde la session)")
+    use_persistent_context: bool = Field(default=False, description="Utiliser un contexte persistant (garde la session) - False recommandé pour l'intégration API")
     window_width: int = Field(default=1440, description="Largeur de fenêtre en mode visible (0 = taille standard)")
     window_height: int = Field(default=900, description="Hauteur de fenêtre en mode visible (0 = taille standard)")
     disable_javascript: bool = Field(default=False, description="Désactiver JavaScript (pour debug)")
