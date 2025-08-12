@@ -6,7 +6,7 @@
     pkgs.chromium
     pkgs.firefox
     pkgs.xvfb-run
-    pkgs.xorg.xvfb
+    pkgs.xorg.xorgserver
     pkgs.gtk3
     pkgs.dbus
     pkgs.fontconfig
