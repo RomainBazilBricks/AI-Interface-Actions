@@ -235,7 +235,12 @@ class CredentialsAPIClient:
             Storage state au format Playwright ou None
         """
         try:
+            # Gérer la structure imbriquée des données
             session_data = credential.get("sessionData", {})
+            
+            # Si les données sont double-imbriquées, prendre le niveau interne
+            if "sessionData" in session_data:
+                session_data = session_data["sessionData"]
             
             if not session_data:
                 logger.warning("Pas de sessionData dans le credential")
@@ -247,24 +252,24 @@ class CredentialsAPIClient:
                 "origins": []
             }
             
-            # Convertir les cookies
+            # Convertir les cookies avec le bon domaine manus.im
             cookies_data = session_data.get("cookies", {})
             for name, value in cookies_data.items():
                 storage_state["cookies"].append({
                     "name": name,
                     "value": value,
-                    "domain": ".manus.ai",
+                    "domain": ".manus.im",  # Tous les cookies sur .manus.im
                     "path": "/",
                     "httpOnly": name in ["session_id", "session_token", "auth_token"],
                     "secure": True,
                     "sameSite": "Lax"
                 })
             
-            # Convertir le localStorage
+            # Convertir le localStorage pour manus.im
             local_storage = session_data.get("local_storage", {})
             if local_storage:
                 storage_state["origins"] = [{
-                    "origin": "https://www.manus.ai",
+                    "origin": "https://www.manus.im",
                     "localStorage": [
                         {"name": k, "value": v} for k, v in local_storage.items()
                     ]
@@ -279,7 +284,8 @@ class CredentialsAPIClient:
             
             logger.info("Storage state généré depuis credential",
                        cookies_count=len(storage_state["cookies"]),
-                       origins_count=len(storage_state["origins"]))
+                       origins_count=len(storage_state["origins"]),
+                       domain="manus.im")
             
             return storage_state
             

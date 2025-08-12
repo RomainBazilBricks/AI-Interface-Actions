@@ -474,6 +474,56 @@ async def send_message_quick_url(request: MessageRequest):
             raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
+@app.get("/debug/credentials")
+async def debug_credentials():
+    """
+    Debug: affiche les credentials récupérés et leur conversion
+    """
+    try:
+        from ai_interface_actions.credentials_client import credentials_client
+        
+        if not credentials_client.is_configured():
+            return {
+                "error": "API credentials non configurée",
+                "config": {
+                    "base_url": credentials_client.base_url,
+                    "has_api_key": bool(credentials_client.api_key)
+                }
+            }
+        
+        # Récupérer les credentials
+        user_email = "romain.bazil@bricks.co"
+        credential = await credentials_client.get_credential_for_platform("manus", user_email)
+        
+        if not credential:
+            return {
+                "error": "Aucun credential trouvé",
+                "user_email": user_email
+            }
+        
+        # Convertir en storage state
+        storage_state = credentials_client.get_storage_state_from_credential(credential)
+        
+        return {
+            "success": True,
+            "user_email": user_email,
+            "credential_id": credential.get("id"),
+            "raw_session_data_keys": list(credential.get("sessionData", {}).keys()),
+            "storage_state_preview": {
+                "cookies_count": len(storage_state.get("cookies", [])) if storage_state else 0,
+                "origins_count": len(storage_state.get("origins", [])) if storage_state else 0,
+                "cookie_domains": [c["domain"] for c in storage_state.get("cookies", [])] if storage_state else [],
+                "cookie_names": [c["name"] for c in storage_state.get("cookies", [])] if storage_state else []
+            }
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors du debug des credentials", error=str(e))
+        return {
+            "error": f"Erreur interne: {str(e)}"
+        }
+
+
 @app.get("/session-status")
 async def check_session_status():
     """

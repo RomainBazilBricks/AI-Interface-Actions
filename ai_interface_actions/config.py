@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     page_timeout: int = Field(default=15000, description="Timeout de chargement des pages (ms)")
     
     # Configuration Manus.ai
-    manus_base_url: str = Field(default="https://www.manus.ai", description="URL de base de Manus.ai")
+    manus_base_url: str = Field(default="https://www.manus.im", description="URL de base de Manus.im")
     
     # API Credentials externe (votre interface web)
     credentials_api_url: str = Field(default="http://localhost:3001/api/ai-credentials", description="URL de l'API de gestion des credentials")

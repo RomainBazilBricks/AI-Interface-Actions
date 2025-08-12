@@ -197,7 +197,7 @@ class BrowserAutomation:
                     storage_state["cookies"].append({
                         "name": "session_token",
                         "value": settings.manus_session_token,
-                        "domain": ".manus.ai",
+                        "domain": ".manus.im",
                         "path": "/",
                         "httpOnly": True,
                         "secure": True
@@ -207,7 +207,7 @@ class BrowserAutomation:
                     storage_state["cookies"].append({
                         "name": "auth_token", 
                         "value": settings.manus_auth_token,
-                        "domain": ".manus.ai",
+                        "domain": ".manus.im",
                         "path": "/",
                         "httpOnly": True,
                         "secure": True
@@ -218,7 +218,7 @@ class BrowserAutomation:
                     try:
                         local_storage = json.loads(settings.manus_local_storage)
                         storage_state["origins"] = [{
-                            "origin": "https://www.manus.ai",
+                            "origin": "https://www.manus.im",
                             "localStorage": [
                                 {"name": k, "value": v} for k, v in local_storage.items()
                             ]
