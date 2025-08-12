@@ -1,0 +1,43 @@
+{ pkgs }: {
+  deps = [
+    pkgs.python312Full
+    pkgs.python312Packages.pip
+    pkgs.python312Packages.setuptools
+    pkgs.chromium
+    pkgs.firefox
+    pkgs.xvfb-run
+    pkgs.xorg.xvfb
+    pkgs.gtk3
+    pkgs.dbus
+    pkgs.fontconfig
+    pkgs.freetype
+    pkgs.libGL
+    pkgs.xorg.libX11
+    pkgs.xorg.libXcomposite
+    pkgs.xorg.libXcursor
+    pkgs.xorg.libXdamage
+    pkgs.xorg.libXext
+    pkgs.xorg.libXfixes
+    pkgs.xorg.libXi
+    pkgs.xorg.libXrender
+    pkgs.xorg.libXtst
+    pkgs.xorg.libxcb
+    pkgs.xorg.libXScrnSaver
+    pkgs.libdrm
+    pkgs.mesa
+    pkgs.nspr
+    pkgs.nss
+    pkgs.pango
+    pkgs.atk
+    pkgs.cairo
+    pkgs.gdk-pixbuf
+    pkgs.glib
+    pkgs.alsa-lib
+    pkgs.at-spi2-atk
+    pkgs.at-spi2-core
+    pkgs.cups
+    pkgs.libxkbcommon
+    pkgs.libxshmfence
+    pkgs.libdrm
+  ];
+} 
