@@ -171,13 +171,16 @@ class BrowserAutomation:
                             return storage_state
                     
                     logger.info("Aucun credential trouvé dans l'API, fallback vers les variables d'environnement")
+                else:
+                    logger.info("API credentials non configurée, utilisation directe des variables d'environnement")
                 
             except Exception as e:
                 logger.warning("Erreur lors de l'accès à l'API de credentials, fallback", error=str(e))
             
-            # Option 2 : Variables d'environnement (FALLBACK)
+            # Option 2 : Variables d'environnement (FALLBACK FORCÉ)
+            logger.info("Vérification des variables d'environnement MANUS_*")
             if settings.manus_cookies or settings.manus_session_token:
-                logger.info("Utilisation des variables d'environnement pour la session")
+                logger.info("✅ Variables d'environnement MANUS_* trouvées, construction du storage_state")
                 
                 storage_state = {
                     "cookies": [],
@@ -188,59 +191,73 @@ class BrowserAutomation:
                 if settings.manus_cookies:
                     try:
                         cookies_data = json.loads(settings.manus_cookies)
-                        storage_state["cookies"] = cookies_data
-                    except json.JSONDecodeError:
-                        logger.warning("Format JSON invalide pour manus_cookies")
+                        logger.info(f"Cookies parsés: {len(cookies_data)} éléments")
+                        
+                        for name, value in cookies_data.items():
+                            # Déterminer le bon domaine selon le cookie
+                            if "intercom" in name.lower():
+                                domain = ".manus.ai"  # Intercom reste sur .manus.ai
+                            else:
+                                domain = ".manus.im"  # Les autres cookies sur .manus.im
+                            
+                            storage_state["cookies"].append({
+                                "name": name,
+                                "value": value,
+                                "domain": domain,
+                                "path": "/",
+                                "httpOnly": name in ["session_id", "session_token", "auth_token"],
+                                "secure": True,
+                                "sameSite": "Lax"
+                            })
+                    except json.JSONDecodeError as e:
+                        logger.error("Erreur lors du parsing des cookies", error=str(e))
                 
-                # Ajouter les tokens individuels comme cookies
+                # Ajouter le token de session si disponible
                 if settings.manus_session_token:
+                    logger.info("Ajout du session_token aux cookies")
                     storage_state["cookies"].append({
                         "name": "session_token",
                         "value": settings.manus_session_token,
                         "domain": ".manus.im",
                         "path": "/",
                         "httpOnly": True,
-                        "secure": True
+                        "secure": True,
+                        "sameSite": "Lax"
                     })
                 
-                if settings.manus_auth_token:
-                    storage_state["cookies"].append({
-                        "name": "auth_token", 
-                        "value": settings.manus_auth_token,
-                        "domain": ".manus.im",
-                        "path": "/",
-                        "httpOnly": True,
-                        "secure": True
-                    })
-                
-                # Ajouter localStorage
+                # Ajouter localStorage si disponible
                 if settings.manus_local_storage:
                     try:
-                        local_storage = json.loads(settings.manus_local_storage)
+                        local_storage_data = json.loads(settings.manus_local_storage)
+                        logger.info(f"LocalStorage parsé: {len(local_storage_data)} éléments")
+                        
                         storage_state["origins"] = [{
                             "origin": "https://www.manus.im",
                             "localStorage": [
-                                {"name": k, "value": v} for k, v in local_storage.items()
+                                {"name": k, "value": v} for k, v in local_storage_data.items()
                             ]
                         }]
-                    except json.JSONDecodeError:
-                        logger.warning("Format JSON invalide pour manus_local_storage")
+                    except json.JSONDecodeError as e:
+                        logger.error("Erreur lors du parsing du localStorage", error=str(e))
                 
                 if storage_state["cookies"] or storage_state["origins"]:
-                    logger.info("Session construite depuis les variables d'environnement",
-                               cookies_count=len(storage_state["cookies"]))
+                    logger.info(f"✅ Storage state construit depuis les variables d'environnement: {len(storage_state['cookies'])} cookies, {len(storage_state['origins'])} origins")
                     return storage_state
-            
+                else:
+                    logger.warning("❌ Storage state vide après construction depuis les variables")
+            else:
+                logger.warning("❌ Aucune variable d'environnement MANUS_* trouvée")
+
             # Option 3 : Fichier de session local
             session_file = Path("session_state.json")
             if session_file.exists():
                 logger.info("Chargement de la session depuis le fichier local")
                 with open(session_file, 'r') as f:
                     return json.load(f)
-            
-            logger.info("Aucune session trouvée")
+
+            logger.warning("❌ Aucune session trouvée (API, variables d'env, ou fichier local)")
             return None
-            
+
         except Exception as e:
             logger.error("Erreur lors de la récupération de l'état de session", error=str(e))
             return None
