@@ -1,5 +1,24 @@
-run = "bash install.sh"
+run = "python start_replit.py"
 modules = ["python-3.12"]
 
-[nix]
-channel = "stable-24_05" 
+[env]
+PYTHONPATH = "/home/runner/AI-Interface-Actions"
+MANUS_SESSION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InJvbWFpbi5iYXppbEBicmlja3MuY28iLCJleHAiOjE3NTc1OTA0OTUsImlhdCI6MTc1NDk5ODQ5NSwianRpIjoiWHV5M1I3QTY4dlRuemVGM21FdnpNRCIsIm5hbWUiOiJSb21haW4gQkFaSUwiLCJvcmlnaW5hbF91c2VyX2lkIjoiIiwidGVhbV91aWQiOiIiLCJ0eXBlIjoidXNlciIsInVzZXJfaWQiOiIzMTA0MTk2NjMwMjY4MjE4MjMifQ.4qoOLMhDNqO0B8zFSyYAgXzhBTy7UvO3QwXNuIGHIC0"
+USE_PERSISTENT_CONTEXT = "false"
+HEADLESS = "true"
+
+[[ports]]
+localPort = 8000
+externalPort = 80
+
+[workflows]
+runButton = "Start API Server"
+
+[[workflows.workflow]]
+name = "Start API Server"
+author = 46340554
+mode = "sequential"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash install.sh" 
