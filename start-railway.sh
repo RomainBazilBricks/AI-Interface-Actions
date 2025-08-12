@@ -1,23 +1,23 @@
 #!/bin/bash
 
-echo "🚂 Démarrage de AI Interface Actions sur Railway avec VNC..."
+echo "🚀 Démarrage de AI Interface Actions sur Railway"
 
-# Créer les répertoires de logs s'ils n'existent pas
-mkdir -p /app/logs
+# Vérification et installation de Playwright si nécessaire
+echo "🔍 Vérification de l'installation Playwright..."
 
-# Afficher les informations de connexion VNC
-echo "📺 VNC Server sera accessible sur le port 5900"
-echo "🌐 API sera accessible sur le port 8000"
+# Tenter d'installer les navigateurs si ils n'existent pas
+if [ ! -d "$HOME/.cache/ms-playwright/chromium-"* ] 2>/dev/null; then
+    echo "⚠️  Navigateurs Playwright manquants, installation..."
+    python -m playwright install chromium --with-deps || {
+        echo "❌ Échec de l'installation complète, tentative sans dépendances système..."
+        python -m playwright install chromium || {
+            echo "⚠️  Installation de Playwright échouée, l'application démarrera en mode dégradé"
+        }
+    }
+else
+    echo "✅ Navigateurs Playwright déjà installés"
+fi
 
-# Vérifier les variables d'environnement importantes
-echo "🔧 Configuration:"
-echo "   - HEADLESS: ${HEADLESS:-true}"
-echo "   - HEADLESS_SETUP: ${HEADLESS_SETUP:-false}"
-echo "   - USE_PERSISTENT_CONTEXT: ${USE_PERSISTENT_CONTEXT:-true}"
-
-# Initialiser le display X11
-export DISPLAY=:1
-
-# Démarrer supervisord pour gérer tous les services
-echo "🎯 Démarrage de Supervisor..."
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf 
+# Démarrage de l'application
+echo "🎯 Démarrage du serveur API..."
+exec python -m ai_interface_actions.main 

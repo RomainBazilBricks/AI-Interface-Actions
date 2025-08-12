@@ -32,20 +32,23 @@ COPY requirements.txt pyproject.toml ./
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# Installation des navigateurs Playwright (en tant que root)
-RUN playwright install chromium \
-    && playwright install-deps chromium
-
-# Copie du code source
+# Copie du code source et scripts
 COPY ai_interface_actions/ ./ai_interface_actions/
+COPY start-railway.sh ./
 COPY .env.example .env
 
 # Création des répertoires de logs et changement de propriétaire
 RUN mkdir -p /app/logs \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app \
+    && chmod +x /app/start-railway.sh
 
-# Changement vers l'utilisateur non-root
+# Changement vers l'utilisateur non-root AVANT l'installation de Playwright
 USER appuser
+
+# Installation des navigateurs Playwright (en tant qu'utilisateur appuser)
+# Cela évite les problèmes de permissions
+RUN playwright install chromium \
+    && playwright install-deps chromium || echo "install-deps failed, continuing..."
 
 # Exposition du port
 EXPOSE 8000
@@ -55,5 +58,5 @@ ENV HEADLESS=true
 ENV DEBUG=false
 ENV LOG_LEVEL=INFO
 
-# Commande de démarrage
-CMD ["python", "-m", "ai_interface_actions.main"] 
+# Commande de démarrage avec script amélioré
+CMD ["./start-railway.sh"] 

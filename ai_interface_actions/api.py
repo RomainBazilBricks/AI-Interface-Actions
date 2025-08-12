@@ -377,6 +377,15 @@ async def send_message_quick_url(request: MessageRequest):
                    platform=request.platform, 
                    has_conversation_url=bool(request.conversation_url))
         
+        # Vérifier que le navigateur est initialisé
+        if not browser_manager.is_initialized:
+            raise HTTPException(
+                status_code=503, 
+                detail="Service temporairement indisponible : navigateur non initialisé. "
+                      "Cela peut arriver si Playwright n'est pas installé correctement. "
+                      "Veuillez contacter l'administrateur."
+            )
+        
         # Validation des paramètres
         if not request.message.strip():
             raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
@@ -444,9 +453,25 @@ async def send_message_quick_url(request: MessageRequest):
                 "wait_for_ai_response": request.wait_for_response
             }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Erreur lors de l'envoi rapide", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+        
+        # Fournir des messages d'erreur plus spécifiques
+        if "Executable doesn't exist" in str(e) or "playwright" in str(e).lower():
+            raise HTTPException(
+                status_code=503, 
+                detail="Service temporairement indisponible : navigateurs Playwright non installés. "
+                      "L'administrateur doit exécuter 'playwright install' sur le serveur."
+            )
+        elif "non connecté" in str(e).lower() or "login" in str(e).lower():
+            raise HTTPException(
+                status_code=401,
+                detail="Session expirée : veuillez utiliser l'endpoint /setup-login pour vous reconnecter à Manus.ai"
+            )
+        else:
+            raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
 @app.get("/session-status")
