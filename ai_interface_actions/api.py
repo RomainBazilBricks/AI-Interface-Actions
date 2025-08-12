@@ -799,6 +799,7 @@ async def debug_environment_variables():
     """
     try:
         from ai_interface_actions.config import settings
+        from ai_interface_actions.credentials_client import credentials_client
         import os
         
         return {
@@ -823,7 +824,7 @@ async def debug_environment_variables():
             "credentials_api_config": {
                 "url": settings.credentials_api_url,
                 "has_token": bool(settings.credentials_api_token),
-                "is_configured": settings.credentials_api_url and settings.credentials_api_token
+                "is_configured": credentials_client.is_configured()
             }
         }
         
