@@ -1,4 +1,4 @@
-run = "python debug_replit.py && python start_replit.py"
+run = "python start_simple.py"
 modules = ["python-3.12"]
 
 [env]
