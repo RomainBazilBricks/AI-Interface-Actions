@@ -657,22 +657,40 @@ async def debug_playwright_cookies():
         # Test Playwright avec debugging détaillé
         from playwright.async_api import async_playwright
         
+        # User-Agent réaliste (celui de votre JSON)
+        user_agent = credential.get("sessionData", {}).get("user_agent", 
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36")
+        
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(storage_state=storage_state)
+            context = await browser.new_context(
+                storage_state=storage_state,
+                user_agent=user_agent,
+                viewport={'width': 1440, 'height': 900},
+                extra_http_headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+            )
             page = await context.new_page()
             
             # 1. Vérifier les cookies AVANT navigation
             cookies_before = await context.cookies()
             
             # 2. Naviguer vers Manus.im
-            await page.goto("https://www.manus.im/app")
-            await page.wait_for_load_state("networkidle")
+            await page.goto("https://www.manus.im/app", wait_until="networkidle")
             
-            # 3. Vérifier les cookies APRÈS navigation
+            # 3. Attendre un peu pour les redirections
+            await page.wait_for_timeout(2000)
+            
+            # 4. Vérifier les cookies APRÈS navigation
             cookies_after = await context.cookies()
             
-            # 4. Vérifier le localStorage
+            # 5. Vérifier le localStorage
             local_storage = await page.evaluate("""
                 () => {
                     const items = {};
@@ -684,10 +702,10 @@ async def debug_playwright_cookies():
                 }
             """)
             
-            # 5. Vérifier l'URL finale (login ou app ?)
+            # 6. Vérifier l'URL finale (login ou app ?)
             final_url = page.url
             
-            # 6. Vérifier si des éléments de connexion sont présents
+            # 7. Vérifier si des éléments de connexion sont présents
             is_logged_in = await page.evaluate("""
                 () => {
                     // Chercher des indicateurs de session active
@@ -695,17 +713,33 @@ async def debug_playwright_cookies():
                         'div[data-testid="user-menu"]',
                         '.user-avatar',
                         '[data-testid="chat-input"]',
-                        'button[aria-label*="profile"]'
+                        'button[aria-label*="profile"]',
+                        '[data-testid="sidebar"]',
+                        '.chat-container',
+                        'button[data-testid="new-chat"]'
                     ];
                     
                     return indicators.some(selector => document.querySelector(selector) !== null);
                 }
             """)
             
+            # 8. Vérifier les erreurs console
+            console_errors = []
+            page.on("console", lambda msg: console_errors.append(f"{msg.type}: {msg.text}") if msg.type in ["error", "warning"] else None)
+            
+            # 9. Vérifier les requêtes réseau échouées
+            failed_requests = []
+            page.on("requestfailed", lambda req: failed_requests.append(f"{req.method} {req.url} - {req.failure}"))
+            
             await browser.close()
             
             return {
-                "status": "debug_complete",
+                "status": "debug_complete_v2",
+                "test_config": {
+                    "user_agent": user_agent,
+                    "extra_headers": True,
+                    "viewport": "1440x900"
+                },
                 "storage_state_applied": {
                     "cookies_count": len(storage_state.get("cookies", [])),
                     "origins_count": len(storage_state.get("origins", []))
@@ -722,14 +756,18 @@ async def debug_playwright_cookies():
                     "after": [{"name": c["name"], "domain": c["domain"]} for c in cookies_after]
                 },
                 "local_storage_keys": list(local_storage.keys()) if local_storage else [],
+                "console_errors": console_errors,
+                "failed_requests": failed_requests,
                 "diagnosis": {
                     "cookies_applied": len(cookies_before) > 0,
                     "cookies_persisted": len(cookies_after) > 0,
                     "local_storage_applied": len(local_storage) > 0,
+                    "user_agent_realistic": user_agent != "",
                     "likely_issue": (
                         "Cookies non appliqués" if len(cookies_before) == 0 
                         else "Cookies perdus après navigation" if len(cookies_after) == 0
                         else "localStorage manquant" if len(local_storage) == 0
+                        else "User-Agent détecté comme bot" if not is_logged_in and final_url.endswith("/login")
                         else "Session valide mais non reconnue par Manus.im"
                     )
                 }
@@ -738,6 +776,45 @@ async def debug_playwright_cookies():
     except Exception as e:
         logger.error("Erreur lors du debug Playwright", error=str(e))
         return {"error": f"Erreur debug: {str(e)}"}
+
+@app.get("/debug/env-vars")
+async def debug_environment_variables():
+    """
+    Debug des variables d'environnement MANUS_*
+    """
+    try:
+        from ai_interface_actions.config import settings
+        import os
+        
+        return {
+            "status": "debug_env_vars",
+            "config_values": {
+                "manus_base_url": settings.manus_base_url,
+                "use_persistent_context": settings.use_persistent_context,
+                "headless": settings.headless,
+            },
+            "env_vars_raw": {
+                "MANUS_SESSION_TOKEN": "***PRÉSENT***" if os.getenv("MANUS_SESSION_TOKEN") else "ABSENT",
+                "MANUS_COOKIES": "***PRÉSENT***" if os.getenv("MANUS_COOKIES") else "ABSENT",
+                "MANUS_LOCAL_STORAGE": "***PRÉSENT***" if os.getenv("MANUS_LOCAL_STORAGE") else "ABSENT",
+                "MANUS_BASE_URL": os.getenv("MANUS_BASE_URL", "ABSENT"),
+                "USE_PERSISTENT_CONTEXT": os.getenv("USE_PERSISTENT_CONTEXT", "ABSENT"),
+            },
+            "env_vars_lengths": {
+                "MANUS_SESSION_TOKEN": len(os.getenv("MANUS_SESSION_TOKEN", "")),
+                "MANUS_COOKIES": len(os.getenv("MANUS_COOKIES", "")),
+                "MANUS_LOCAL_STORAGE": len(os.getenv("MANUS_LOCAL_STORAGE", "")),
+            },
+            "credentials_api_config": {
+                "url": settings.credentials_api_url,
+                "has_token": bool(settings.credentials_api_token),
+                "is_configured": settings.credentials_api_url and settings.credentials_api_token
+            }
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors du debug env vars", error=str(e))
+        return {"error": f"Erreur debug env: {str(e)}"}
 
 
 if __name__ == "__main__":
