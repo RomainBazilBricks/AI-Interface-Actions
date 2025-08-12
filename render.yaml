@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: ai-interface-actions
+    env: python
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+      python -m playwright install-deps chromium
+    startCommand: python -m ai_interface_actions.main
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: MANUS_SESSION_TOKEN
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InJvbWFpbi5iYXppbEBicmlja3MuY28iLCJleHAiOjE3NTc1OTA0OTUsImlhdCI6MTc1NDk5ODQ5NSwianRpIjoiWHV5M1I3QTY4dlRuemVGM21FdnpNRCIsIm5hbWUiOiJSb21haW4gQkFaSUwiLCJvcmlnaW5hbF91c2VyX2lkIjoiIiwidGVhbV91aWQiOiIiLCJ0eXBlIjoidXNlciIsInVzZXJfaWQiOiIzMTA0MTk2NjMwMjY4MjE4MjMifQ.4qoOLMhDNqO0B8zFSyYAgXzhBTy7UvO3QwXNuIGHIC0
+      - key: MANUS_COOKIES
+        value: '{"session_id":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbWFpbCI6InJvbWFpbi5iYXppbEBicmlja3MuY28iLCJleHAiOjE3NTc1OTA0OTUsImlhdCI6MTc1NDk5ODQ5NSwianRpIjoiWHV5M1I3QTY4dlRuemVGM21FdnpNRCIsIm5hbWUiOiJSb21haW4gQkFaSUwiLCJvcmlnaW5hbF91c2VyX2lkIjoiIiwidGVhbV91aWQiOiIiLCJ0eXBlIjoidXNlciIsInVzZXJfaWQiOiIzMTA0MTk2NjMwMjY4MjE4MjMifQ.4qoOLMhDNqO0B8zFSyYAgXzhBTy7UvO3QwXNuIGHIC0","login_success":"1","manus-theme":"dark","intercom-session-k7n2hgls":"R3RBdzl5bVlqWkhxbjdmQklaS3d0RHRQM0NkS0VINEdodGpiMnFFTTlMSW5Nc01uVGZaS3NUWFpsSlllZElHcktZdzRYMHd0UGlMeVZFbGNqNGtRWVdiSE5Nb3NzZUV4R0F2WitaTjlXaTA9LS1icTJTVU1haFExZWJENHF4a2M1ZU5BPT0","intercom-device-id-k7n2hgls":"4a8e0672-d6a4-457c-b689-3a5d600c3074"}'
+      - key: USE_PERSISTENT_CONTEXT
+        value: false
+      - key: MANUS_BASE_URL
+        value: https://www.manus.im 
