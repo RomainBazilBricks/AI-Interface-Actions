@@ -512,7 +512,10 @@ class BrowserAutomation:
     async def _check_login_status(self, page: Page) -> bool:
         """Vérifie si l'utilisateur est connecté"""
         try:
-            # Vérifier la présence d'indicateurs de connexion
+            # Attendre que la page soit chargée
+            await page.wait_for_timeout(3000)
+            
+            # Vérifier d'abord la présence d'indicateurs de NON-connexion
             login_indicators = [
                 "input[type='email']",
                 "input[name='email']",
@@ -526,8 +529,49 @@ class BrowserAutomation:
                     logger.warning("Utilisateur non connecté - connexion manuelle requise")
                     return False
             
-            logger.info("Session utilisateur active")
-            return True
+            # Vérifier POSITIVEMENT la présence d'éléments de l'interface connectée
+            connected_indicators = [
+                "textarea[placeholder*='message']",
+                "input[placeholder*='message']",
+                "textarea[placeholder*='Message']",
+                "input[placeholder*='Message']",
+                ".chat-input",
+                "[data-testid='chat-input']",
+                "button[data-testid='new-chat']",
+                ".new-chat",
+                ".sidebar",
+                "[data-testid='sidebar']",
+                ".user-menu",
+                "[data-testid='user-menu']",
+                "nav"
+            ]
+            
+            # Attendre qu'au moins un élément de l'interface soit présent
+            for indicator in connected_indicators:
+                try:
+                    await page.wait_for_selector(indicator, timeout=5000)
+                    logger.info(f"Session utilisateur active - élément trouvé: {indicator}")
+                    return True
+                except:
+                    continue
+            
+            # Si aucun élément positif trouvé, vérifier l'URL
+            current_url = page.url
+            if "/login" in current_url or "/signin" in current_url:
+                logger.warning("URL de login détectée, utilisateur non connecté")
+                return False
+            
+            # Dernière chance : attendre plus longtemps pour le chargement dynamique
+            logger.info("Attente supplémentaire pour le chargement des éléments...")
+            await page.wait_for_timeout(5000)
+            
+            for indicator in connected_indicators:
+                if await page.locator(indicator).count() > 0:
+                    logger.info(f"Session utilisateur active après attente - élément trouvé: {indicator}")
+                    return True
+            
+            logger.warning("Aucun élément de l'interface connectée trouvé - statut de connexion incertain")
+            return False
                     
         except Exception as e:
             logger.warning("Impossible de vérifier le statut de connexion", error=str(e))
