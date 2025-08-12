@@ -912,19 +912,72 @@ async def debug_send_message_with_exact_headers(request: MessageRequest):
             
             final_url = page.url
             
-            # Vérifier si connecté
-            is_logged_in = await page.evaluate("""
+            # Vérifier si connecté avec debug détaillé
+            login_check = await page.evaluate("""
                 () => {
                     const indicators = [
                         '[data-testid="chat-input"]',
-                        '.chat-container',
+                        '.chat-container', 
                         'button[data-testid="new-chat"]',
                         'textarea[placeholder*="message"]',
-                        'input[placeholder*="message"]'
+                        'input[placeholder*="message"]',
+                        'textarea[placeholder*="Message"]',
+                        'input[placeholder*="Message"]',
+                        '.chat-input',
+                        '[placeholder*="chat"]',
+                        '[placeholder*="Chat"]',
+                        'button[aria-label*="new"]',
+                        'button[aria-label*="New"]',
+                        '.new-chat',
+                        '.sidebar',
+                        '[data-testid="sidebar"]',
+                        '.user-menu',
+                        '[data-testid="user-menu"]',
+                        'nav',
+                        '.navigation'
                     ];
-                    return indicators.some(selector => document.querySelector(selector) !== null);
+                    
+                    const found = [];
+                    const notFound = [];
+                    
+                    indicators.forEach(selector => {
+                        const element = document.querySelector(selector);
+                        if (element) {
+                            found.push(selector);
+                        } else {
+                            notFound.push(selector);
+                        }
+                    });
+                    
+                    // Vérifier aussi les éléments de login (pour confirmer qu'on n'est PAS sur la page de login)
+                    const loginElements = [
+                        'input[type="email"]',
+                        'input[type="password"]', 
+                        'button[type="submit"]',
+                        '.login-form',
+                        '.sign-in',
+                        '[data-testid="login"]'
+                    ];
+                    
+                    const loginFound = [];
+                    loginElements.forEach(selector => {
+                        if (document.querySelector(selector)) {
+                            loginFound.push(selector);
+                        }
+                    });
+                    
+                    return {
+                        isLoggedIn: found.length > 0,
+                        foundElements: found,
+                        notFoundElements: notFound,
+                        loginElementsFound: loginFound,
+                        pageTitle: document.title,
+                        currentUrl: window.location.href
+                    };
                 }
             """)
+            
+            is_logged_in = login_check['isLoggedIn']
             
             await browser.close()
             
@@ -935,7 +988,13 @@ async def debug_send_message_with_exact_headers(request: MessageRequest):
                 "appears_logged_in": is_logged_in,
                 "cookies_applied": len(storage_state.get("cookies", [])),
                 "test_result": "SUCCESS" if is_logged_in else "FAILED",
-                "diagnosis": "Connecté avec succès" if is_logged_in else f"Redirigé vers {final_url}"
+                "diagnosis": "Connecté avec succès" if is_logged_in else f"Redirigé vers {final_url}",
+                "debug_info": {
+                    "found_elements": login_check['foundElements'],
+                    "login_elements_found": login_check['loginElementsFound'],
+                    "page_title": login_check['pageTitle'],
+                    "current_url": login_check['currentUrl']
+                }
             }
             
     except Exception as e:
