@@ -132,20 +132,7 @@ class BrowserAutomation:
             # Configuration des timeouts
             self.context.set_default_timeout(settings.page_timeout)
             
-            # Tentative de login automatique si email/password fournis
-            if settings.manus_email and settings.manus_password:
-                logger.info("Tentative de login automatique avec email/password")
-                page = await self.context.new_page()
-                login_success = await self._login_with_credentials(
-                    page, 
-                    settings.manus_email, 
-                    settings.manus_password
-                )
-                if login_success:
-                    logger.info("Login automatique réussi")
-                else:
-                    logger.warning("Login automatique échoué, continuons quand même")
-                await page.close()
+            # Login manuel uniquement - pas de login automatique
             
             self.is_initialized = True
             logger.info("Navigateur initialisé avec succès")
