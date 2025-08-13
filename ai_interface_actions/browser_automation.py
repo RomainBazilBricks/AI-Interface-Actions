@@ -6,10 +6,11 @@ import os
 import structlog
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, TimeoutError
 
 from ai_interface_actions.config import settings
+from ai_interface_actions.credentials_client import CredentialsAPIClient
 
 logger = structlog.get_logger(__name__)
 
@@ -22,6 +23,7 @@ class BrowserAutomation:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.is_initialized = False
+        self.credentials_client = CredentialsAPIClient()
         
     async def initialize(self, headless_override: bool = None) -> None:
         """
@@ -129,6 +131,21 @@ class BrowserAutomation:
             
             # Configuration des timeouts
             self.context.set_default_timeout(settings.page_timeout)
+            
+            # Tentative de login automatique si email/password fournis
+            if settings.manus_email and settings.manus_password:
+                logger.info("Tentative de login automatique avec email/password")
+                page = await self.context.new_page()
+                login_success = await self._login_with_credentials(
+                    page, 
+                    settings.manus_email, 
+                    settings.manus_password
+                )
+                if login_success:
+                    logger.info("Login automatique réussi")
+                else:
+                    logger.warning("Login automatique échoué, continuons quand même")
+                await page.close()
             
             self.is_initialized = True
             logger.info("Navigateur initialisé avec succès")
@@ -619,6 +636,8 @@ class BrowserAutomation:
         """Trouve le champ de saisie de message"""
         # Sélecteurs possibles pour le champ de message
         selectors = [
+            "textarea[placeholder*='Attribuez une tâche']",  # Sélecteur spécifique Manus.ai
+            "textarea[placeholder*='posez une question']",   # Sélecteur spécifique Manus.ai
             "textarea[placeholder*='message']",
             "textarea[placeholder*='Message']",
             "textarea[placeholder*='Tapez']",
@@ -710,6 +729,107 @@ class BrowserAutomation:
         except Exception as e:
             logger.error("Erreur lors de l'attente de la réponse", error=str(e))
             return None
+
+    async def _login_with_credentials(self, page: Page, email: str, password: str) -> bool:
+        """
+        Login automatique avec email/mot de passe pour Manus.im
+        """
+        try:
+            logger.info("Tentative de login automatique", email=email)
+            
+            # Aller à la page de login spécifique
+            await page.goto("https://manus.im/login?type=signIn", wait_until="networkidle")
+            await page.wait_for_timeout(2000)
+            
+            # Vérifier si on est déjà connecté
+            if "dashboard" in page.url or "conversation" in page.url or "chat" in page.url:
+                logger.info("Déjà connecté")
+                return True
+            
+            # Étape 1: Cliquer sur "Continue with email"
+            continue_email_button = 'button:has-text("Continue with email")'
+            try:
+                await page.wait_for_selector(continue_email_button, timeout=10000)
+                await page.click(continue_email_button)
+                logger.info("Bouton 'Continue with email' cliqué")
+                await page.wait_for_timeout(2000)
+            except Exception as e:
+                logger.error("Impossible de cliquer sur 'Continue with email'", error=str(e))
+                return False
+            
+            # Étape 2: Remplir les champs email et mot de passe
+            email_selector = 'input[id="email"]'
+            password_selector = 'input[type="password"]'
+            
+            try:
+                # Attendre que les champs soient visibles
+                await page.wait_for_selector(email_selector, timeout=10000)
+                await page.wait_for_selector(password_selector, timeout=10000)
+                
+                # Remplir les champs
+                await page.fill(email_selector, email)
+                await page.fill(password_selector, password)
+                logger.info("Champs email et password remplis")
+                
+            except Exception as e:
+                logger.error("Impossible de remplir les champs", error=str(e))
+                return False
+            
+            # Étape 3: Gérer le CAPTCHA hCaptcha
+            try:
+                # Attendre que le captcha soit chargé
+                captcha_frame = 'iframe[title*="hCaptcha"]'
+                await page.wait_for_selector(captcha_frame, timeout=5000)
+                logger.warning("CAPTCHA hCaptcha détecté - nécessite intervention manuelle ou service de résolution")
+                
+                # Pour l'instant, on attend 30 secondes pour que l'utilisateur le fasse manuellement
+                logger.info("Attente de 30 secondes pour résolution manuelle du CAPTCHA...")
+                await page.wait_for_timeout(30000)
+                
+            except:
+                logger.info("Pas de CAPTCHA détecté ou déjà résolu")
+            
+            # Étape 4: Cliquer sur le bouton Sign in
+            signin_button = 'button:has-text("Sign in")'
+            try:
+                # Attendre que le bouton soit activé (plus de disabled)
+                await page.wait_for_function(
+                    f"document.querySelector('{signin_button}') && !document.querySelector('{signin_button}').disabled",
+                    timeout=35000
+                )
+                
+                await page.click(signin_button)
+                logger.info("Bouton 'Sign in' cliqué")
+                
+            except Exception as e:
+                logger.error("Impossible de cliquer sur 'Sign in'", error=str(e))
+                return False
+            
+            # Étape 5: Attendre la redirection
+            await page.wait_for_timeout(5000)
+            
+            # Vérifier si le login a réussi
+            current_url = page.url
+            if any(keyword in current_url for keyword in ["dashboard", "conversation", "chat", "app"]):
+                logger.info("Login automatique réussi", url=current_url)
+                return True
+            
+            # Vérifier s'il y a des erreurs
+            try:
+                error_element = await page.query_selector('[class*="error"], [role="alert"]')
+                if error_element:
+                    error_text = await error_element.text_content()
+                    logger.error("Erreur de login détectée", error=error_text)
+                    return False
+            except:
+                pass
+            
+            logger.warning("Login incertain", url=current_url)
+            return False
+            
+        except Exception as e:
+            logger.error("Erreur lors du login automatique", error=str(e))
+            return False
 
 
 # Instance globale du gestionnaire de navigateur
