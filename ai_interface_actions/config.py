@@ -3,6 +3,7 @@ Configuration de l'application avec validation Pydantic
 """
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -55,6 +56,10 @@ class Settings(BaseSettings):
     
     # Rate limiting
     rate_limit_per_minute: int = Field(default=10, description="Limite de requêtes par minute par IP")
+    
+    # Login automatique Manus
+    manus_email: Optional[str] = Field(default=None, description="Email pour login automatique Manus.ai")
+    manus_password: Optional[str] = Field(default=None, description="Mot de passe pour login automatique Manus.ai")
 
 
 # Instance globale des paramètres

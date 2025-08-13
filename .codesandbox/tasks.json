@@ -1,0 +1,22 @@
+{
+  "setupTasks": [
+    {
+      "name": "Install Dependencies",
+      "command": "pip install -r requirements.txt"
+    },
+    {
+      "name": "Install Playwright",
+      "command": "playwright install chromium"
+    }
+  ],
+  "tasks": {
+    "start-api": {
+      "name": "Start API",
+      "command": "python -m ai_interface_actions.main",
+      "runAtStart": true,
+      "preview": {
+        "port": 8000
+      }
+    }
+  }
+} 
