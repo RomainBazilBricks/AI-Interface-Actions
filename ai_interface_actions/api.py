@@ -152,57 +152,7 @@ async def health_check():
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
-@app.post("/send-message", response_model=MessageResponse)
-async def send_message(request: MessageRequest, background_tasks: BackgroundTasks):
-    """
-    Envoie un message à une plateforme IA
-    
-    Ce endpoint crée une tâche en arrière-plan et retourne immédiatement un ID de tâche.
-    Utilisez l'endpoint /task/{task_id} pour suivre le progrès.
-    """
-    try:
-        logger.info("Nouvelle demande d'envoi de message", 
-                   platform=request.platform, 
-                   message_length=len(request.message))
-        
-        # Validation des paramètres
-        if not request.message.strip():
-            raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
-        
-        if request.platform != "manus":
-            raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
-        
-        # Création de la tâche
-        task_params = {
-            "message": request.message,
-            "platform": request.platform,
-            "conversation_url": request.conversation_url,
-            "wait_for_response": request.wait_for_response,
-            "timeout_seconds": request.timeout_seconds
-        }
-        
-        task_id = task_manager.create_task("send_message", task_params)
-        
-        # Démarrage de la tâche en arrière-plan
-        background_tasks.add_task(task_manager.execute_task, task_id)
-        
-        logger.info("Tâche créée et démarrée", task_id=task_id)
-        
-        return MessageResponse(
-            task_id=task_id,
-            status=TaskStatus.PENDING,
-            message_sent=request.message,
-            conversation_url=request.conversation_url if request.conversation_url else None,
-            ai_response=None,
-            execution_time_seconds=None,
-            error_message=None
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Erreur lors de la création de la tâche", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+# Endpoint /send-message supprimé - utilisez /send-message-quick à la place
 
 
 @app.get("/task/{task_id}", response_model=TaskStatusResponse)
@@ -364,8 +314,8 @@ async def setup_manual_login(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
-@app.post("/send-message-quick")
-async def send_message_quick_url(request: MessageRequest):
+@app.post("/send-message")
+async def send_message(request: MessageRequest):
     """
     Envoie un message et retourne rapidement l'URL de conversation
     
