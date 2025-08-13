@@ -490,12 +490,7 @@ class BrowserAutomation:
                 logger.info("Navigation vers Manus.ai (nouvelle conversation)")
                 await page.goto(settings.manus_base_url, wait_until="networkidle")
             
-            # Vérifier le statut de connexion
-            if not await self._check_login_status(page):
-                raise Exception(
-                    "Utilisateur non connecté. Veuillez vous connecter manuellement à Manus.ai dans votre navigateur. "
-                    "La session durera 30 jours."
-                )
+            # Pas de vérification de connexion - l'utilisateur se connecte manuellement
             
             # Recherche du champ de saisie de message
             logger.info("Recherche du champ de saisie")
@@ -573,6 +568,8 @@ class BrowserAutomation:
             
             # Vérifier POSITIVEMENT la présence d'éléments de l'interface connectée
             connected_indicators = [
+                "textarea[placeholder*='Attribuez une tâche']",  # Sélecteur spécifique Manus.ai
+                "textarea[placeholder*='posez une question']",   # Sélecteur spécifique Manus.ai
                 "textarea[placeholder*='message']",
                 "input[placeholder*='message']",
                 "textarea[placeholder*='Message']",
