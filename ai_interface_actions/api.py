@@ -203,8 +203,7 @@ async def send_message_sync(request: MessageRequest):
             "platform": request.platform,
             "conversation_url": request.conversation_url,
             "wait_for_response": request.wait_for_response,
-            "timeout_seconds": request.timeout_seconds,
-            "use_clipboard_workaround": request.use_clipboard_workaround
+            "timeout_seconds": request.timeout_seconds
         }
         
         task_id = task_manager.create_task("send_message", task_params)
@@ -354,8 +353,7 @@ async def send_message(request: MessageRequest):
                 "platform": request.platform,
                 "conversation_url": request.conversation_url,
                 "wait_for_response": request.wait_for_response,
-                "timeout_seconds": request.timeout_seconds,
-                "use_clipboard_workaround": request.use_clipboard_workaround
+                "timeout_seconds": request.timeout_seconds
             }
             
             task_id = task_manager.create_task("send_message", task_params)
@@ -387,8 +385,7 @@ async def send_message(request: MessageRequest):
                     "platform": request.platform,
                     "conversation_url": conversation_url,
                     "wait_for_response": True,
-                    "timeout_seconds": request.timeout_seconds,
-                    "use_clipboard_workaround": request.use_clipboard_workaround
+                    "timeout_seconds": request.timeout_seconds
                 }
                 
                 task_id = task_manager.create_task("send_message", task_params)

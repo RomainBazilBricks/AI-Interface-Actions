@@ -21,7 +21,6 @@ class MessageRequest(BaseModel):
     conversation_url: str = Field(default="", description="URL de conversation existante (optionnel - nouvelle conversation si vide)")
     wait_for_response: bool = Field(default=True, description="Attendre la réponse de l'IA")
     timeout_seconds: int = Field(default=60, description="Timeout pour la réponse", ge=10, le=300)
-    use_clipboard_workaround: bool = Field(default=False, description="Utiliser la stratégie copier-coller pour contourner la limite de 3000 caractères de Manus")
 
 
 class MessageResponse(BaseModel):
