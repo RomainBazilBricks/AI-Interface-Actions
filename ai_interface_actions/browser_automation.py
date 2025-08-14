@@ -612,19 +612,14 @@ class BrowserAutomation:
             # Étape 5: Coller le texte (Ctrl+V) - cela contourne la limite
             logger.info("Étape 5: Collage du texte pour contourner la limite")
             await page.keyboard.press("Control+v")
-            logger.info("Attente de 10 secondes pour laisser le temps au document de s'uploader...")
+            await asyncio.sleep(0.5)  # Petit délai pour s'assurer du collage
+            
+            # Étape 6: Attendre que le document s'uploade
+            logger.info("Étape 6: Attente de 10 secondes pour laisser le temps au document de s'uploader...")
             await asyncio.sleep(10)  # Délai pour laisser le temps au document de s'uploader
             
-            # Étape 6: Remplacer par un message court avec indication
-            replacement_message = "Suivre les indications dans le texte joint"
-            logger.info("Étape 6: Remplacement par message court", replacement=replacement_message)
-            
-            # Sélectionner tout et remplacer
-            await page.keyboard.press("Control+a")
-            await asyncio.sleep(0.3)
-            await message_input.fill(replacement_message)
-            
-            # Envoi du message
+            # Étape 7: Envoi direct du message (sans remplacement)
+            logger.info("Étape 7: Envoi du message")
             await self._send_message(page)
             
             # Attendre la réponse si demandé
@@ -639,8 +634,7 @@ class BrowserAutomation:
             
             return {
                 "success": True,
-                "message_sent": replacement_message,
-                "original_message": message,
+                "message_sent": message,  # Le message original est envoyé via clipboard
                 "clipboard_workaround_used": True,
                 "conversation_url": final_url,
                 "ai_response": ai_response,
