@@ -572,8 +572,14 @@ class BrowserAutomation:
         try:
             logger.info("Début de l'envoi de message à Manus.ai avec stratégie clipboard", message_length=len(message))
             
-            # Création d'une nouvelle page
-            page = await self.context.new_page()
+            # Réutiliser une page existante ou en créer une nouvelle
+            pages = self.context.pages
+            if pages:
+                page = pages[0]  # Utiliser la première page existante
+                logger.info("Réutilisation d'une page existante")
+            else:
+                page = await self.context.new_page()
+                logger.info("Création d'une nouvelle page")
             
             # Navigation vers Manus.ai ou conversation spécifique
             if conversation_url and conversation_url.strip():
@@ -681,8 +687,9 @@ class BrowserAutomation:
             }
             
         finally:
-            if page:
-                await page.close()
+            # Ne pas fermer la page pour éviter que l'onglet se ferme
+            # La page sera réutilisée pour les prochaines requêtes
+            pass
     
     async def _check_login_status(self, page: Page) -> bool:
         """Vérifie si l'utilisateur est connecté"""
