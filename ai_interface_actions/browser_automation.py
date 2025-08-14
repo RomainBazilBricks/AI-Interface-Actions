@@ -603,7 +603,8 @@ class BrowserAutomation:
             # Étape 3: Copier le texte (Ctrl+C)
             logger.info("Étape 3: Copie du texte dans le presse-papiers")
             await page.keyboard.press("Control+c")
-            await asyncio.sleep(0.5)  # Délai pour s'assurer de la copie
+            logger.info("Attente de 2 secondes après la copie...")
+            await asyncio.sleep(2)  # Délai de 2 secondes après la copie
             
             # Étape 4: Effacer le champ
             logger.info("Étape 4: Effacement du champ de saisie")
