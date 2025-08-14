@@ -142,21 +142,12 @@ class TaskManager:
             raise ValueError("Message vide")
         
         if platform == "manus":
-            # Utiliser clipboard workaround seulement si le message dépasse 2800 caractères
-            if len(message) > 2800:
-                result = await browser_manager.send_message_to_manus_with_clipboard_workaround(
-                    message=message,
-                    conversation_url=conversation_url,
-                    wait_for_response=wait_for_response,
-                    timeout_seconds=timeout_seconds
-                )
-            else:
-                result = await browser_manager.send_message_to_manus(
-                    message=message,
-                    conversation_url=conversation_url,
-                    wait_for_response=wait_for_response,
-                    timeout_seconds=timeout_seconds
-                )
+            result = await browser_manager.send_message_to_manus(
+                message=message,
+                conversation_url=conversation_url,
+                wait_for_response=wait_for_response,
+                timeout_seconds=timeout_seconds
+            )
         else:
             raise ValueError(f"Plateforme non supportée: {platform}")
         
