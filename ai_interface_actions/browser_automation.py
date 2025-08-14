@@ -612,7 +612,8 @@ class BrowserAutomation:
             # Étape 5: Coller le texte (Ctrl+V) - cela contourne la limite
             logger.info("Étape 5: Collage du texte pour contourner la limite")
             await page.keyboard.press("Control+v")
-            await asyncio.sleep(1)  # Délai pour s'assurer du collage
+            logger.info("Attente de 10 secondes pour laisser le temps au document de s'uploader...")
+            await asyncio.sleep(10)  # Délai pour laisser le temps au document de s'uploader
             
             # Étape 6: Remplacer par un message court avec indication
             replacement_message = "Suivre les indications dans le texte joint"
