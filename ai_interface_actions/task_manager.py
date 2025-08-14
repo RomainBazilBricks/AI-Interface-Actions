@@ -137,17 +137,27 @@ class TaskManager:
         conversation_url = params.get("conversation_url", "")
         wait_for_response = params.get("wait_for_response", True)
         timeout_seconds = params.get("timeout_seconds", 60)
+        use_clipboard_workaround = params.get("use_clipboard_workaround", False)
         
         if not message:
             raise ValueError("Message vide")
         
         if platform == "manus":
-            result = await browser_manager.send_message_to_manus(
-                message=message,
-                conversation_url=conversation_url,
-                wait_for_response=wait_for_response,
-                timeout_seconds=timeout_seconds
-            )
+            # Choisir la fonction appropriée selon le paramètre
+            if use_clipboard_workaround:
+                result = await browser_manager.send_message_to_manus_with_clipboard_workaround(
+                    message=message,
+                    conversation_url=conversation_url,
+                    wait_for_response=wait_for_response,
+                    timeout_seconds=timeout_seconds
+                )
+            else:
+                result = await browser_manager.send_message_to_manus(
+                    message=message,
+                    conversation_url=conversation_url,
+                    wait_for_response=wait_for_response,
+                    timeout_seconds=timeout_seconds
+                )
         else:
             raise ValueError(f"Plateforme non supportée: {platform}")
         

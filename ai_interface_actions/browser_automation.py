@@ -546,6 +546,130 @@ class BrowserAutomation:
             if page:
                 await page.close()
     
+    async def send_message_to_manus_with_clipboard_workaround(self, message: str, conversation_url: str = "", wait_for_response: bool = True, timeout_seconds: int = 60) -> Dict[str, Any]:
+        """
+        Envoie un message à Manus.ai en utilisant la stratégie de contournement du copier-coller
+        pour éviter la limite de 3000 caractères.
+        
+        Stratégie :
+        1. Saisir le message long dans la zone de saisie
+        2. Sélectionner tout (Ctrl+A) et copier (Ctrl+C)
+        3. Effacer le champ et coller (Ctrl+V) - contourne la limite
+        4. Remplacer par un message court + indication
+        
+        Args:
+            message: Message à envoyer (peut être > 3000 caractères)
+            conversation_url: URL de conversation existante (optionnel)
+            wait_for_response: Attendre la réponse de l'IA
+            timeout_seconds: Timeout pour la réponse
+            
+        Returns:
+            Dict contenant le résultat de l'opération
+        """
+        await self.ensure_initialized()
+        
+        page = None
+        try:
+            logger.info("Début de l'envoi de message à Manus.ai avec stratégie clipboard", message_length=len(message))
+            
+            # Création d'une nouvelle page
+            page = await self.context.new_page()
+            
+            # Navigation vers Manus.ai ou conversation spécifique
+            if conversation_url and conversation_url.strip():
+                logger.info("Navigation vers conversation existante", url=conversation_url)
+                await page.goto(conversation_url, wait_until="networkidle")
+            else:
+                logger.info("Navigation vers Manus.ai (nouvelle conversation)")
+                await page.goto(settings.manus_base_url, wait_until="networkidle")
+            
+            # Recherche du champ de saisie de message
+            logger.info("Recherche du champ de saisie")
+            message_input = await self._find_message_input(page)
+            
+            if not message_input:
+                raise Exception("Impossible de trouver le champ de saisie de message")
+            
+            # Étape 1: Saisir le message long dans la zone de saisie
+            logger.info("Étape 1: Saisie du message long dans la zone")
+            await message_input.click()  # Focus sur le champ
+            await message_input.fill(message)
+            
+            # Étape 2: Sélectionner tout le texte (Ctrl+A)
+            logger.info("Étape 2: Sélection de tout le texte")
+            await page.keyboard.press("Control+a")
+            await asyncio.sleep(0.5)  # Petit délai pour s'assurer de la sélection
+            
+            # Étape 3: Copier le texte (Ctrl+C)
+            logger.info("Étape 3: Copie du texte dans le presse-papiers")
+            await page.keyboard.press("Control+c")
+            await asyncio.sleep(0.5)  # Délai pour s'assurer de la copie
+            
+            # Étape 4: Effacer le champ
+            logger.info("Étape 4: Effacement du champ de saisie")
+            await message_input.fill("")
+            
+            # Étape 5: Coller le texte (Ctrl+V) - cela contourne la limite
+            logger.info("Étape 5: Collage du texte pour contourner la limite")
+            await page.keyboard.press("Control+v")
+            await asyncio.sleep(1)  # Délai pour s'assurer du collage
+            
+            # Étape 6: Remplacer par un message court avec indication
+            replacement_message = "Suivre les indications dans le texte joint"
+            logger.info("Étape 6: Remplacement par message court", replacement=replacement_message)
+            
+            # Sélectionner tout et remplacer
+            await page.keyboard.press("Control+a")
+            await asyncio.sleep(0.3)
+            await message_input.fill(replacement_message)
+            
+            # Envoi du message
+            await self._send_message(page)
+            
+            # Attendre la réponse si demandé
+            ai_response = None
+            if wait_for_response:
+                logger.info("Attente de la réponse de l'IA", timeout=timeout_seconds)
+                ai_response = await self._wait_for_ai_response(page, timeout_seconds)
+            
+            # Récupérer l'URL finale de la conversation
+            final_url = page.url
+            logger.info("Message envoyé avec succès via stratégie clipboard", conversation_url=final_url)
+            
+            return {
+                "success": True,
+                "message_sent": replacement_message,
+                "original_message": message,
+                "clipboard_workaround_used": True,
+                "conversation_url": final_url,
+                "ai_response": ai_response,
+                "page_url": final_url
+            }
+            
+        except TimeoutError as e:
+            logger.error("Timeout lors de l'envoi du message avec stratégie clipboard", error=str(e))
+            return {
+                "success": False,
+                "error": f"Timeout: {str(e)}",
+                "message_sent": message,
+                "clipboard_workaround_used": True,
+                "conversation_url": page.url if page else None
+            }
+            
+        except Exception as e:
+            logger.error("Erreur lors de l'envoi du message avec stratégie clipboard", error=str(e))
+            return {
+                "success": False,
+                "error": str(e),
+                "message_sent": message,
+                "clipboard_workaround_used": True,
+                "conversation_url": page.url if page else None
+            }
+            
+        finally:
+            if page:
+                await page.close()
+    
     async def _check_login_status(self, page: Page) -> bool:
         """Vérifie si l'utilisateur est connecté"""
         try:
