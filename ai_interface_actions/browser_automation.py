@@ -594,11 +594,14 @@ class BrowserAutomation:
             logger.info("Étape 1: Saisie du message long dans la zone")
             await message_input.click()  # Focus sur le champ
             await message_input.fill(message)
+            await asyncio.sleep(0.5)  # Attendre que le texte soit bien saisi
             
-            # Étape 2: Sélectionner tout le texte (Ctrl+A)
+            # Étape 2: Sélectionner tout le texte (Ctrl+A) - s'assurer du focus
             logger.info("Étape 2: Sélection de tout le texte")
+            await message_input.click()  # Re-focus pour être sûr
+            await message_input.focus()  # Focus explicite
             await page.keyboard.press("Control+a")
-            await asyncio.sleep(0.5)  # Petit délai pour s'assurer de la sélection
+            await asyncio.sleep(1)  # Délai plus long pour s'assurer de la sélection
             
             # Étape 3: Copier le texte (Ctrl+C)
             logger.info("Étape 3: Copie du texte dans le presse-papiers")
@@ -609,18 +612,32 @@ class BrowserAutomation:
             # Étape 4: Effacer le champ
             logger.info("Étape 4: Effacement du champ de saisie")
             await message_input.fill("")
+            await asyncio.sleep(0.5)
             
             # Étape 5: Coller le texte (Ctrl+V) - cela contourne la limite
             logger.info("Étape 5: Collage du texte pour contourner la limite")
+            await message_input.click()  # Focus avant collage
             await page.keyboard.press("Control+v")
-            await asyncio.sleep(0.5)  # Petit délai pour s'assurer du collage
+            await asyncio.sleep(1)  # Délai pour s'assurer du collage
             
             # Étape 6: Attendre que le document s'uploade
             logger.info("Étape 6: Attente de 10 secondes pour laisser le temps au document de s'uploader...")
             await asyncio.sleep(10)  # Délai pour laisser le temps au document de s'uploader
             
-            # Étape 7: Envoi direct du message (sans remplacement)
-            logger.info("Étape 7: Envoi du message")
+            # Étape 7: Remplacer par un message court avec indication
+            replacement_message = "Suivre les indications dans le texte joint"
+            logger.info("Étape 7: Remplacement par message court", replacement=replacement_message)
+            
+            # Sélectionner tout et remplacer
+            await message_input.click()
+            await message_input.focus()
+            await page.keyboard.press("Control+a")
+            await asyncio.sleep(0.5)
+            await message_input.fill(replacement_message)
+            await asyncio.sleep(0.5)
+            
+            # Étape 8: Envoi du message
+            logger.info("Étape 8: Envoi du message")
             await self._send_message(page)
             
             # Attendre la réponse si demandé
@@ -635,7 +652,8 @@ class BrowserAutomation:
             
             return {
                 "success": True,
-                "message_sent": message,  # Le message original est envoyé via clipboard
+                "message_sent": replacement_message,
+                "original_message": message,
                 "clipboard_workaround_used": True,
                 "conversation_url": final_url,
                 "ai_response": ai_response,
