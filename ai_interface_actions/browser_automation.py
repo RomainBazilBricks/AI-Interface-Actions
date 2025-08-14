@@ -596,43 +596,30 @@ class BrowserAutomation:
             if not message_input:
                 raise Exception("Impossible de trouver le champ de saisie de message")
             
-            # Étape 1: Saisir le message long dans la zone de saisie
-            logger.info("Étape 1: Saisie du message long dans la zone")
+            # Étape 1: Mettre le texte dans le presse-papiers système
+            logger.info("Étape 1: Mise du texte dans le presse-papiers système")
+            # Utiliser l'API clipboard de Playwright pour mettre le texte dans le presse-papiers
+            await page.evaluate("(text) => navigator.clipboard.writeText(text)", message)
+            await asyncio.sleep(1)  # Délai pour s'assurer que le texte est dans le presse-papiers
+            
+            # Étape 2: Cliquer sur la zone de saisie et coller
+            logger.info("Étape 2: Clic sur la zone de saisie et collage")
             await message_input.click()  # Focus sur le champ
-            await message_input.fill(message)
-            await asyncio.sleep(0.5)  # Attendre que le texte soit bien saisi
-            
-            # Étape 2: Sélectionner tout le texte (Ctrl+A) - s'assurer du focus
-            logger.info("Étape 2: Sélection de tout le texte")
-            await message_input.click()  # Re-focus pour être sûr
             await message_input.focus()  # Focus explicite
-            await page.keyboard.press("Control+a")
-            await asyncio.sleep(1)  # Délai plus long pour s'assurer de la sélection
-            
-            # Étape 3: Copier le texte (Ctrl+C)
-            logger.info("Étape 3: Copie du texte dans le presse-papiers")
-            await page.keyboard.press("Control+c")
-            logger.info("Attente de 2 secondes après la copie...")
-            await asyncio.sleep(2)  # Délai de 2 secondes après la copie
-            
-            # Étape 4: Effacer le champ
-            logger.info("Étape 4: Effacement du champ de saisie")
-            await message_input.fill("")
             await asyncio.sleep(0.5)
             
-            # Étape 5: Coller le texte (Ctrl+V) - cela contourne la limite
-            logger.info("Étape 5: Collage du texte pour contourner la limite")
-            await message_input.click()  # Focus avant collage
+            # Coller directement le texte long (Ctrl+V) - cela contourne la limite
+            logger.info("Étape 3: Collage du texte pour contourner la limite")
             await page.keyboard.press("Control+v")
-            await asyncio.sleep(1)  # Délai pour s'assurer du collage
+            await asyncio.sleep(2)  # Délai pour s'assurer du collage
             
-            # Étape 6: Attendre que le document s'uploade
-            logger.info("Étape 6: Attente de 10 secondes pour laisser le temps au document de s'uploader...")
+            # Étape 4: Attendre que le document s'uploade
+            logger.info("Étape 4: Attente de 10 secondes pour laisser le temps au document de s'uploader...")
             await asyncio.sleep(10)  # Délai pour laisser le temps au document de s'uploader
             
-            # Étape 7: Remplacer par un message court avec indication
+            # Étape 5: Remplacer par un message court avec indication
             replacement_message = "Suivre les indications dans le texte joint"
-            logger.info("Étape 7: Remplacement par message court", replacement=replacement_message)
+            logger.info("Étape 5: Remplacement par message court", replacement=replacement_message)
             
             # Sélectionner tout et remplacer
             await message_input.click()
@@ -642,8 +629,8 @@ class BrowserAutomation:
             await message_input.fill(replacement_message)
             await asyncio.sleep(0.5)
             
-            # Étape 8: Envoi du message
-            logger.info("Étape 8: Envoi du message")
+            # Étape 6: Envoi du message
+            logger.info("Étape 6: Envoi du message")
             await self._send_message(page)
             
             # Attendre la réponse si demandé
