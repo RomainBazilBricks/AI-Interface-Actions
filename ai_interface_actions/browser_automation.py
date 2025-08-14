@@ -596,35 +596,47 @@ class BrowserAutomation:
             if not message_input:
                 raise Exception("Impossible de trouver le champ de saisie de message")
             
-            # Étape 1: Saisir temporairement le texte dans un élément invisible pour le copier "naturellement"
-            logger.info("Étape 1: Création d'un élément temporaire pour copie naturelle")
-            # Créer un textarea invisible temporaire avec le contenu
-            await page.evaluate("""
-                (text) => {
-                    const tempTextarea = document.createElement('textarea');
-                    tempTextarea.value = text;
-                    tempTextarea.style.position = 'fixed';
-                    tempTextarea.style.left = '-9999px';
-                    tempTextarea.style.top = '-9999px';
-                    tempTextarea.id = 'temp-clipboard-area';
-                    document.body.appendChild(tempTextarea);
-                    tempTextarea.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(tempTextarea);
-                }
-            """, message)
-            await asyncio.sleep(1)  # Délai pour s'assurer que le texte est copié
+            # Étape 1: Mettre le texte dans le presse-papiers système via le contexte Playwright
+            logger.info("Étape 1: Mise du texte dans le presse-papiers système")
+            # Utiliser la méthode de Playwright pour accéder au presse-papiers système
+            try:
+                # Méthode 1: Via le contexte du navigateur
+                await self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+                await page.evaluate("navigator.clipboard.writeText(arguments[0])", message)
+                await asyncio.sleep(2)  # Délai pour s'assurer que le texte est dans le presse-papiers système
+            except Exception as e:
+                logger.warning("Fallback vers méthode alternative de clipboard", error=str(e))
+                # Méthode 2: Via un textarea temporaire (fallback)
+                await page.evaluate("""
+                    (text) => {
+                        const tempTextarea = document.createElement('textarea');
+                        tempTextarea.value = text;
+                        tempTextarea.style.position = 'fixed';
+                        tempTextarea.style.left = '-9999px';
+                        tempTextarea.style.top = '-9999px';
+                        document.body.appendChild(tempTextarea);
+                        tempTextarea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(tempTextarea);
+                    }
+                """, message)
+                await asyncio.sleep(2)
             
-            # Étape 2: Cliquer sur la zone de saisie et coller
-            logger.info("Étape 2: Clic sur la zone de saisie et collage naturel")
+            # Étape 2: Attendre un peu pour simuler le comportement humain
+            logger.info("Étape 2: Simulation d'un délai humain avant collage")
+            await asyncio.sleep(1)  # Simuler le temps qu'un humain prendrait
+            
+            # Étape 3: Cliquer sur la zone de saisie
+            logger.info("Étape 3: Clic sur la zone de saisie")
             await message_input.click()  # Focus sur le champ
             await message_input.focus()  # Focus explicite
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)  # Attendre que le focus soit bien établi
             
-            # Coller le texte long (Ctrl+V) - cela devrait déclencher la détection de Manus
-            logger.info("Étape 3: Collage naturel du texte (devrait être détecté comme pièce jointe)")
+            # Étape 4: Coller le texte long (Ctrl+V) - cela devrait déclencher la détection de Manus
+            logger.info("Étape 4: Collage du texte (devrait être détecté comme pièce jointe par Manus)")
             await page.keyboard.press("Control+v")
-            await asyncio.sleep(3)  # Délai plus long pour laisser Manus détecter le long texte
+            logger.info("Attente de 5 secondes pour que Manus détecte et traite le long texte...")
+            await asyncio.sleep(5)  # Délai pour laisser Manus détecter et traiter le long texte
             
             # Étape 4: Attendre que le document s'uploade
             logger.info("Étape 4: Attente de 10 secondes pour laisser le temps au document de s'uploader...")
