@@ -600,9 +600,9 @@ class BrowserAutomation:
             logger.info("Étape 1: Mise du texte dans le presse-papiers système")
             # Utiliser la méthode de Playwright pour accéder au presse-papiers système
             try:
-                # Méthode 1: Via le contexte du navigateur
+                # Méthode 1: Via le contexte du navigateur (syntaxe corrigée)
                 await self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
-                await page.evaluate("navigator.clipboard.writeText(arguments[0])", message)
+                await page.evaluate("(text) => navigator.clipboard.writeText(text)", message)
                 await asyncio.sleep(2)  # Délai pour s'assurer que le texte est dans le presse-papiers système
             except Exception as e:
                 logger.warning("Fallback vers méthode alternative de clipboard", error=str(e))
@@ -626,14 +626,32 @@ class BrowserAutomation:
             logger.info("Étape 2: Simulation d'un délai humain avant collage")
             await asyncio.sleep(1)  # Simuler le temps qu'un humain prendrait
             
-            # Étape 3: Cliquer sur la zone de saisie
-            logger.info("Étape 3: Clic sur la zone de saisie")
-            await message_input.click()  # Focus sur le champ
+            # Étape 3: Focus TRÈS explicite sur la zone de saisie
+            logger.info("Étape 3: Focus explicite et multiple sur la zone de saisie")
+            
+            # Scroll vers l'élément pour s'assurer qu'il est visible
+            await message_input.scroll_into_view_if_needed()
+            await asyncio.sleep(0.5)
+            
+            # Triple focus pour être absolument sûr
+            await message_input.click()  # Clic 1
+            await asyncio.sleep(0.3)
             await message_input.focus()  # Focus explicite
-            await asyncio.sleep(1)  # Attendre que le focus soit bien établi
+            await asyncio.sleep(0.3)
+            await message_input.click()  # Clic 2 pour être sûr
+            await asyncio.sleep(0.5)
+            
+            # Vérifier que le focus est bien là
+            is_focused = await page.evaluate("() => document.activeElement && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT')")
+            logger.info("Zone de saisie focusée", is_focused=is_focused)
+            
+            if not is_focused:
+                logger.warning("Zone de saisie pas focusée, nouvelle tentative...")
+                await message_input.click(force=True)
+                await asyncio.sleep(0.5)
             
             # Étape 4: Coller le texte long (Ctrl+V) - cela devrait déclencher la détection de Manus
-            logger.info("Étape 4: Collage du texte (devrait être détecté comme pièce jointe par Manus)")
+            logger.info("Étape 4: Collage du texte (zone de saisie focusée)")
             await page.keyboard.press("Control+v")
             logger.info("Attente de 5 secondes pour que Manus détecte et traite le long texte...")
             await asyncio.sleep(5)  # Délai pour laisser Manus détecter et traiter le long texte
