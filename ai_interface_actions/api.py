@@ -3,8 +3,9 @@ API FastAPI pour l'automatisation des plateformes IA
 """
 import asyncio
 import time
+import hashlib
 from contextlib import asynccontextmanager
-from typing import Dict, Any
+from typing import Dict, Any, Set
 
 import structlog
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
@@ -41,6 +42,43 @@ logger = structlog.get_logger(__name__)
 
 # Variable pour tracker le temps de démarrage
 app_start_time = time.time()
+
+# Système de déduplication des requêtes
+request_cache: Dict[str, Dict[str, Any]] = {}
+processing_requests: Set[str] = set()
+
+def generate_request_hash(request: MessageRequest, client_ip: str = "") -> str:
+    """Génère un hash unique pour une requête de message"""
+    content = f"{request.message}|{request.platform}|{request.conversation_url}|{client_ip}"
+    return hashlib.md5(content.encode()).hexdigest()
+
+def is_duplicate_request(request_hash: str, max_age_seconds: int = 30) -> bool:
+    """Vérifie si une requête est un doublon récent"""
+    current_time = time.time()
+    
+    # Nettoyer les anciennes entrées
+    expired_keys = []
+    for key, data in request_cache.items():
+        if current_time - data["timestamp"] > max_age_seconds:
+            expired_keys.append(key)
+    
+    for key in expired_keys:
+        request_cache.pop(key, None)
+        processing_requests.discard(key)
+    
+    return request_hash in request_cache or request_hash in processing_requests
+
+def mark_request_processing(request_hash: str) -> None:
+    """Marque une requête comme en cours de traitement"""
+    processing_requests.add(request_hash)
+
+def complete_request(request_hash: str, result: Dict[str, Any]) -> None:
+    """Marque une requête comme terminée et cache le résultat"""
+    processing_requests.discard(request_hash)
+    request_cache[request_hash] = {
+        "timestamp": time.time(),
+        "result": result
+    }
 
 
 @asynccontextmanager
@@ -178,7 +216,7 @@ async def get_task_status(task_id: str):
 
 
 @app.post("/send-message-sync", response_model=MessageResponse)
-async def send_message_sync(request: MessageRequest):
+async def send_message_sync(request: MessageRequest, http_request: Request):
     """
     Envoie un message de manière synchrone (attend la réponse)
     
@@ -186,15 +224,35 @@ async def send_message_sync(request: MessageRequest):
     Utilisez plutôt l'endpoint asynchrone /send-message pour de meilleures performances.
     """
     try:
+        # Génération du hash de requête pour déduplication
+        client_ip = http_request.client.host if http_request.client else ""
+        request_hash = generate_request_hash(request, client_ip)
+        
+        # Vérification des doublons
+        if is_duplicate_request(request_hash):
+            if request_hash in request_cache:
+                logger.info("Requête dupliquée détectée, retour du cache", request_hash=request_hash[:8])
+                cached_result = request_cache[request_hash]["result"]
+                return MessageResponse(**cached_result)
+            else:
+                logger.warning("Requête déjà en cours de traitement", request_hash=request_hash[:8])
+                raise HTTPException(status_code=429, detail="Requête identique déjà en cours de traitement")
+        
+        # Marquer la requête comme en cours
+        mark_request_processing(request_hash)
+        
         logger.info("Demande d'envoi synchrone", 
                    platform=request.platform, 
-                   message_length=len(request.message))
+                   message_length=len(request.message),
+                   request_hash=request_hash[:8])
         
         # Validation des paramètres
         if not request.message.strip():
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
         
         if request.platform != "manus":
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
         
         # Création et exécution immédiate de la tâche
@@ -214,26 +272,39 @@ async def send_message_sync(request: MessageRequest):
         # Récupération du résultat
         task = task_manager.get_task(task_id)
         if not task:
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=500, detail="Erreur lors de la récupération de la tâche")
         
         if task.status == TaskStatus.FAILED:
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=500, detail=task.error_message or "Échec de la tâche")
         
         result = task.result or {}
         
-        return MessageResponse(
-            task_id=task_id,
-            status=task.status,
-            message_sent=request.message,
-            conversation_url=result.get("conversation_url"),
-            ai_response=result.get("ai_response"),
-            execution_time_seconds=task.execution_time_seconds,
-            error_message=task.error_message
-        )
+        response_data = {
+            "task_id": task_id,
+            "status": task.status,
+            "message_sent": request.message,
+            "conversation_url": result.get("conversation_url"),
+            "ai_response": result.get("ai_response"),
+            "execution_time_seconds": task.execution_time_seconds,
+            "error_message": task.error_message
+        }
+        
+        # Cacher le résultat
+        complete_request(request_hash, response_data)
+        
+        return MessageResponse(**response_data)
         
     except HTTPException:
+        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur HTTP
+        if 'request_hash' in locals():
+            processing_requests.discard(request_hash)
         raise
     except Exception as e:
+        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur
+        if 'request_hash' in locals():
+            processing_requests.discard(request_hash)
         logger.error("Erreur lors de l'envoi synchrone", error=str(e))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
@@ -315,7 +386,7 @@ async def setup_manual_login(background_tasks: BackgroundTasks):
 
 
 @app.post("/send-message")
-async def send_message(request: MessageRequest):
+async def send_message(request: MessageRequest, http_request: Request):
     """
     Envoie un message et retourne rapidement l'URL de conversation
     
@@ -323,12 +394,30 @@ async def send_message(request: MessageRequest):
     La tâche continue en arrière-plan pour la réponse complète.
     """
     try:
+        # Génération du hash de requête pour déduplication
+        client_ip = http_request.client.host if http_request.client else ""
+        request_hash = generate_request_hash(request, client_ip)
+        
+        # Vérification des doublons
+        if is_duplicate_request(request_hash, max_age_seconds=10):  # Plus court pour l'endpoint rapide
+            if request_hash in request_cache:
+                logger.info("Requête dupliquée détectée, retour du cache", request_hash=request_hash[:8])
+                return request_cache[request_hash]["result"]
+            else:
+                logger.warning("Requête déjà en cours de traitement", request_hash=request_hash[:8])
+                raise HTTPException(status_code=429, detail="Requête identique déjà en cours de traitement")
+        
+        # Marquer la requête comme en cours
+        mark_request_processing(request_hash)
+        
         logger.info("Demande d'envoi rapide avec URL", 
                    platform=request.platform, 
-                   has_conversation_url=bool(request.conversation_url))
+                   has_conversation_url=bool(request.conversation_url),
+                   request_hash=request_hash[:8])
         
         # Vérifier que le navigateur est initialisé
         if not browser_manager.is_initialized:
+            processing_requests.discard(request_hash)
             raise HTTPException(
                 status_code=503, 
                 detail="Service temporairement indisponible : navigateur non initialisé. "
@@ -338,9 +427,11 @@ async def send_message(request: MessageRequest):
         
         # Validation des paramètres
         if not request.message.strip():
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
         
         if request.platform != "manus":
+            processing_requests.discard(request_hash)
             raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
         
         # Si URL de conversation fournie, pas besoin de récupération rapide
@@ -359,7 +450,7 @@ async def send_message(request: MessageRequest):
             task_id = task_manager.create_task("send_message", task_params)
             asyncio.create_task(task_manager.execute_task(task_id))
             
-            return {
+            response_data = {
                 "task_id": task_id,
                 "status": "pending",
                 "message_sent": request.message,
@@ -367,6 +458,11 @@ async def send_message(request: MessageRequest):
                 "quick_response": True,
                 "message": "Message envoyé dans conversation existante"
             }
+            
+            # Cacher le résultat
+            complete_request(request_hash, response_data)
+            
+            return response_data
         
         else:
             # Nouvelle conversation : récupération rapide de l'URL
@@ -393,7 +489,7 @@ async def send_message(request: MessageRequest):
             else:
                 task_id = None
             
-            return {
+            response_data = {
                 "task_id": task_id,
                 "status": "url_ready",
                 "message_sent": request.message,
@@ -402,10 +498,21 @@ async def send_message(request: MessageRequest):
                 "message": f"Nouvelle conversation créée. URL disponible immédiatement.",
                 "wait_for_ai_response": request.wait_for_response
             }
+            
+            # Cacher le résultat
+            complete_request(request_hash, response_data)
+            
+            return response_data
         
     except HTTPException:
+        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur HTTP
+        if 'request_hash' in locals():
+            processing_requests.discard(request_hash)
         raise
     except Exception as e:
+        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur
+        if 'request_hash' in locals():
+            processing_requests.discard(request_hash)
         logger.error("Erreur lors de l'envoi rapide", error=str(e))
         
         # Fournir des messages d'erreur plus spécifiques
@@ -422,6 +529,70 @@ async def send_message(request: MessageRequest):
             )
         else:
             raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/admin/clear-cache")
+async def clear_request_cache():
+    """
+    Vide le cache de déduplication des requêtes
+    
+    Utile en cas de problème de double envoi persistant.
+    """
+    try:
+        global request_cache, processing_requests
+        
+        cache_size = len(request_cache)
+        processing_size = len(processing_requests)
+        
+        request_cache.clear()
+        processing_requests.clear()
+        
+        logger.info("Cache de déduplication vidé", 
+                   cached_requests=cache_size, 
+                   processing_requests=processing_size)
+        
+        return {
+            "message": "Cache de déduplication vidé avec succès",
+            "cleared_cached_requests": cache_size,
+            "cleared_processing_requests": processing_size
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors du vidage du cache", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.get("/admin/cache-status")
+async def get_cache_status():
+    """
+    Affiche le statut du cache de déduplication
+    """
+    try:
+        current_time = time.time()
+        
+        # Analyser les entrées du cache
+        cache_entries = []
+        for request_hash, data in request_cache.items():
+            age_seconds = current_time - data["timestamp"]
+            cache_entries.append({
+                "hash": request_hash[:8] + "...",
+                "age_seconds": round(age_seconds, 2),
+                "has_result": "result" in data
+            })
+        
+        processing_entries = [hash_val[:8] + "..." for hash_val in processing_requests]
+        
+        return {
+            "cached_requests": len(request_cache),
+            "processing_requests": len(processing_requests),
+            "cache_entries": cache_entries,
+            "processing_entries": processing_entries,
+            "cache_max_age_seconds": 30
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors de la récupération du statut du cache", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
 @app.get("/debug/credentials")

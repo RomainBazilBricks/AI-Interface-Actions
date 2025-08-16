@@ -646,7 +646,7 @@ class BrowserAutomation:
         return None
     
     async def _send_message(self, page: Page) -> None:
-        """Envoie le message"""
+        """Envoie le message avec protection contre les doubles clics"""
         # Sélecteurs possibles pour le bouton d'envoi
         send_selectors = [
             "button:has-text('Send')",
@@ -662,16 +662,45 @@ class BrowserAutomation:
             try:
                 button = page.locator(selector).first
                 if await button.count() > 0 and await button.is_visible():
-                    await button.click()
+                    # Vérifier que le bouton n'est pas désactivé
+                    is_disabled = await button.is_disabled()
+                    if is_disabled:
+                        logger.warning("Bouton d'envoi désactivé, attente...", selector=selector)
+                        await page.wait_for_timeout(1000)
+                        continue
+                    
+                    # Clic unique avec protection
+                    await button.click(force=False, timeout=5000)
                     logger.info("Message envoyé via bouton", selector=selector)
+                    
+                    # Attendre que le bouton soit désactivé ou disparaisse (confirmation d'envoi)
+                    try:
+                        await page.wait_for_function(
+                            f"!document.querySelector('{selector}') || document.querySelector('{selector}').disabled",
+                            timeout=3000
+                        )
+                        logger.info("Confirmation d'envoi détectée")
+                    except:
+                        logger.warning("Pas de confirmation d'envoi détectée")
+                    
                     return
-            except Exception:
+            except Exception as e:
+                logger.warning("Erreur avec le bouton", selector=selector, error=str(e))
                 continue
         
-        # Si aucun bouton trouvé, essayer Entrée
+        # Si aucun bouton trouvé, essayer Entrée (avec protection similaire)
         try:
-            await page.keyboard.press("Enter")
-            logger.info("Message envoyé via touche Entrée")
+            # Vérifier qu'on est toujours dans le champ de saisie
+            message_input = await self._find_message_input(page)
+            if message_input:
+                await message_input.focus()
+                await page.keyboard.press("Enter")
+                logger.info("Message envoyé via touche Entrée")
+                
+                # Attendre un délai pour éviter les envois multiples
+                await page.wait_for_timeout(1000)
+            else:
+                raise Exception("Champ de saisie non trouvé pour l'envoi via Entrée")
         except Exception as e:
             raise Exception(f"Impossible d'envoyer le message: {str(e)}")
     
