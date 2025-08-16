@@ -426,10 +426,13 @@ async def setup_manual_login(background_tasks: BackgroundTasks):
 @app.post("/send-message")
 async def send_message(request: MessageRequest, http_request: Request):
     """
-    Envoie un message et retourne rapidement l'URL de conversation
+    Endpoint unifié pour envoyer des messages - s'adapte selon les paramètres
     
-    Idéal pour récupérer l'URL d'une nouvelle conversation sans attendre la réponse IA.
-    La tâche continue en arrière-plan pour la réponse complète.
+    Comportement intelligent :
+    - Si conversation_url fournie : Envoi direct dans la conversation existante (réutilise la page)
+    - Si conversation_url vide : Crée une nouvelle conversation et retourne l'URL rapidement
+    
+    Évite les nouveaux onglets en réutilisant les pages existantes pour les conversations connues.
     """
     try:
         # Génération du hash de requête pour déduplication
@@ -474,29 +477,45 @@ async def send_message(request: MessageRequest, http_request: Request):
             processing_requests.discard(request_hash)
             raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
         
-        # Si URL de conversation fournie, pas besoin de récupération rapide
+        # Si URL de conversation fournie, envoyer directement dans la conversation existante
         if request.conversation_url and request.conversation_url.strip():
-            logger.info("URL de conversation déjà fournie, lancement tâche normale")
+            logger.info("URL de conversation fournie - envoi direct dans conversation existante", 
+                       url=request.conversation_url)
             
-            # Lancer la tâche normale en arrière-plan
-            task_params = {
+            # Envoi direct dans la conversation existante (utilise la logique corrigée)
+            result = await browser_manager.send_message_to_manus(
+                message=request.message,
+                conversation_url=request.conversation_url,
+                wait_for_response=request.wait_for_response,
+                timeout_seconds=request.timeout_seconds
+            )
+            
+            if not result.get("success", False):
+                processing_requests.discard(request_hash)
+                raise HTTPException(status_code=500, detail=result.get("error", "Erreur lors de l'envoi"))
+            
+            # Créer une tâche pour le tracking (optionnel)
+            task_id = task_manager.create_task("send_message", {
                 "message": request.message,
                 "platform": request.platform,
                 "conversation_url": request.conversation_url,
                 "wait_for_response": request.wait_for_response,
                 "timeout_seconds": request.timeout_seconds
-            }
+            })
             
-            task_id = task_manager.create_task("send_message", task_params)
-            asyncio.create_task(task_manager.execute_task(task_id))
+            # Marquer la tâche comme terminée immédiatement
+            task = task_manager.get_task(task_id)
+            if task:
+                task.complete_execution(result)
             
             response_data = {
                 "task_id": task_id,
-                "status": "pending",
+                "status": "completed",
                 "message_sent": request.message,
-                "conversation_url": request.conversation_url,
-                "quick_response": True,
-                "message": "Message envoyé dans conversation existante"
+                "conversation_url": result.get("conversation_url", request.conversation_url),
+                "ai_response": result.get("ai_response"),
+                "quick_response": False,  # Réponse complète
+                "message": "Message envoyé dans conversation existante avec succès"
             }
             
             # Cacher le résultat
@@ -719,6 +738,48 @@ async def get_active_pages():
         
     except Exception as e:
         logger.error("Erreur lors de la récupération des pages actives", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/debug/test-conversation-reuse")
+async def test_conversation_reuse(conversation_url: str, message: str = "Test de réutilisation"):
+    """
+    Teste la réutilisation d'une conversation existante
+    """
+    try:
+        if not browser_manager.is_initialized:
+            return {
+                "error": "Navigateur non initialisé",
+                "browser_status": "not_initialized"
+            }
+        
+        # Vérifier si la page existe déjà
+        page_exists = conversation_url in browser_manager.active_pages
+        conversation_id = browser_manager._extract_conversation_id(conversation_url)
+        
+        # Simuler l'appel qui serait fait
+        logger.info("Test de réutilisation de conversation", 
+                   url=conversation_url, 
+                   page_exists=page_exists,
+                   conversation_id=conversation_id)
+        
+        # Tester la récupération/création de page
+        page = await browser_manager._get_or_create_page(conversation_url)
+        page_was_reused = not page_exists and conversation_url in browser_manager.active_pages
+        
+        return {
+            "conversation_url": conversation_url,
+            "conversation_id": conversation_id,
+            "page_existed_before": page_exists,
+            "page_was_reused": page_was_reused,
+            "current_page_url": page.url if not page.is_closed() else "closed",
+            "total_active_pages": len(browser_manager.active_pages),
+            "test_message": message,
+            "recommendation": "Utilisez /send-message avec cette URL pour tester l'envoi réel"
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors du test de réutilisation", error=str(e))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
