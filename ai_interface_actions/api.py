@@ -47,12 +47,13 @@ app_start_time = time.time()
 request_cache: Dict[str, Dict[str, Any]] = {}
 processing_requests: Set[str] = set()
 
-def generate_request_hash(request: MessageRequest, client_ip: str = "") -> str:
+def generate_request_hash(request: MessageRequest, client_ip: str = "", user_agent: str = "") -> str:
     """Génère un hash unique pour une requête de message"""
-    content = f"{request.message}|{request.platform}|{request.conversation_url}|{client_ip}"
+    # Inclure plus d'informations pour une meilleure déduplication
+    content = f"{request.message}|{request.platform}|{request.conversation_url}|{client_ip}|{user_agent[:50]}"
     return hashlib.md5(content.encode()).hexdigest()
 
-def is_duplicate_request(request_hash: str, max_age_seconds: int = 30) -> bool:
+def is_duplicate_request(request_hash: str, max_age_seconds: int = 15) -> bool:  # Réduit à 15 secondes
     """Vérifie si une requête est un doublon récent"""
     current_time = time.time()
     
@@ -66,7 +67,15 @@ def is_duplicate_request(request_hash: str, max_age_seconds: int = 30) -> bool:
         request_cache.pop(key, None)
         processing_requests.discard(key)
     
-    return request_hash in request_cache or request_hash in processing_requests
+    is_duplicate = request_hash in request_cache or request_hash in processing_requests
+    
+    if is_duplicate:
+        logger.warning("Requête dupliquée détectée", 
+                      request_hash=request_hash[:8],
+                      in_cache=request_hash in request_cache,
+                      in_processing=request_hash in processing_requests)
+    
+    return is_duplicate
 
 def mark_request_processing(request_hash: str) -> None:
     """Marque une requête comme en cours de traitement"""
@@ -116,25 +125,52 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Middleware personnalisé pour gérer CORS avec ngrok
+# Middleware personnalisé pour gérer CORS avec ngrok et logging détaillé
 @app.middleware("http")
 async def cors_handler(request: Request, call_next):
+    # Générer un ID unique pour cette requête
+    import uuid
+    request_id = str(uuid.uuid4())[:8]
+    
+    # Logging détaillé de la requête
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    
+    logger.info("Requête reçue", 
+               request_id=request_id,
+               method=request.method,
+               url=str(request.url),
+               client_ip=client_ip,
+               user_agent=user_agent[:100],  # Limiter la longueur
+               headers=dict(request.headers))
+    
     # Gérer les requêtes OPTIONS (preflight) explicitement
     if request.method == "OPTIONS":
+        logger.info("Requête OPTIONS (preflight CORS)", request_id=request_id)
         response = Response()
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
         response.headers["Access-Control-Allow-Headers"] = "*"
         response.headers["Access-Control-Max-Age"] = "3600"
+        response.headers["X-Request-ID"] = request_id
         return response
     
     # Traiter la requête normale
+    start_time = time.time()
     response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    # Logging de la réponse
+    logger.info("Réponse envoyée", 
+               request_id=request_id,
+               status_code=response.status_code,
+               process_time=round(process_time, 3))
     
     # Ajouter les headers CORS à toutes les réponses
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
     response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["X-Request-ID"] = request_id
     
     return response
 
@@ -226,7 +262,8 @@ async def send_message_sync(request: MessageRequest, http_request: Request):
     try:
         # Génération du hash de requête pour déduplication
         client_ip = http_request.client.host if http_request.client else ""
-        request_hash = generate_request_hash(request, client_ip)
+        user_agent = http_request.headers.get("user-agent", "")
+        request_hash = generate_request_hash(request, client_ip, user_agent)
         
         # Vérification des doublons
         if is_duplicate_request(request_hash):
@@ -240,6 +277,7 @@ async def send_message_sync(request: MessageRequest, http_request: Request):
         
         # Marquer la requête comme en cours
         mark_request_processing(request_hash)
+        logger.info("Nouvelle requête acceptée", request_hash=request_hash[:8])
         
         logger.info("Demande d'envoi synchrone", 
                    platform=request.platform, 
@@ -396,7 +434,8 @@ async def send_message(request: MessageRequest, http_request: Request):
     try:
         # Génération du hash de requête pour déduplication
         client_ip = http_request.client.host if http_request.client else ""
-        request_hash = generate_request_hash(request, client_ip)
+        user_agent = http_request.headers.get("user-agent", "")
+        request_hash = generate_request_hash(request, client_ip, user_agent)
         
         # Vérification des doublons
         if is_duplicate_request(request_hash, max_age_seconds=10):  # Plus court pour l'endpoint rapide
@@ -409,6 +448,7 @@ async def send_message(request: MessageRequest, http_request: Request):
         
         # Marquer la requête comme en cours
         mark_request_processing(request_hash)
+        logger.info("Nouvelle requête rapide acceptée", request_hash=request_hash[:8])
         
         logger.info("Demande d'envoi rapide avec URL", 
                    platform=request.platform, 
@@ -587,11 +627,54 @@ async def get_cache_status():
             "processing_requests": len(processing_requests),
             "cache_entries": cache_entries,
             "processing_entries": processing_entries,
-            "cache_max_age_seconds": 30
+            "cache_max_age_seconds": 15
         }
         
     except Exception as e:
         logger.error("Erreur lors de la récupération du statut du cache", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/debug/simulate-request")
+async def simulate_request(message: str = "Test message", client_ip: str = "127.0.0.1"):
+    """
+    Simule une requête pour tester la déduplication
+    """
+    try:
+        from ai_interface_actions.models import MessageRequest
+        
+        # Créer une requête simulée
+        request = MessageRequest(
+            message=message,
+            platform="manus",
+            conversation_url="",
+            wait_for_response=False
+        )
+        
+        # Générer le hash
+        request_hash = generate_request_hash(request, client_ip, "debug-user-agent")
+        
+        # Vérifier si c'est un doublon
+        is_duplicate = is_duplicate_request(request_hash)
+        
+        if not is_duplicate:
+            mark_request_processing(request_hash)
+            # Simuler le traitement
+            import asyncio
+            await asyncio.sleep(0.1)
+            complete_request(request_hash, {"simulated": True, "timestamp": time.time()})
+        
+        return {
+            "request_hash": request_hash[:8] + "...",
+            "is_duplicate": is_duplicate,
+            "message": message,
+            "client_ip": client_ip,
+            "cache_size": len(request_cache),
+            "processing_size": len(processing_requests)
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors de la simulation", error=str(e))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
