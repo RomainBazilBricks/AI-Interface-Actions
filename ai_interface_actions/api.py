@@ -678,6 +678,50 @@ async def simulate_request(message: str = "Test message", client_ip: str = "127.
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
+@app.get("/admin/active-pages")
+async def get_active_pages():
+    """
+    Affiche les pages actives dans le pool de réutilisation
+    """
+    try:
+        if not browser_manager.is_initialized:
+            return {
+                "active_pages": 0,
+                "pages": [],
+                "browser_status": "not_initialized"
+            }
+        
+        pages_info = []
+        for conversation_url, page in browser_manager.active_pages.items():
+            try:
+                is_closed = page.is_closed()
+                current_url = page.url if not is_closed else "closed"
+                
+                pages_info.append({
+                    "conversation_url": conversation_url,
+                    "current_url": current_url,
+                    "is_closed": is_closed,
+                    "conversation_id": browser_manager._extract_conversation_id(conversation_url)
+                })
+            except Exception as e:
+                pages_info.append({
+                    "conversation_url": conversation_url,
+                    "current_url": "error",
+                    "is_closed": True,
+                    "error": str(e)
+                })
+        
+        return {
+            "active_pages": len(browser_manager.active_pages),
+            "pages": pages_info,
+            "browser_status": "initialized"
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors de la récupération des pages actives", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
 @app.get("/debug/credentials")
 async def debug_credentials():
     """

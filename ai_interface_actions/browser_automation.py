@@ -24,6 +24,8 @@ class BrowserAutomation:
         self.context: Optional[BrowserContext] = None
         self.is_initialized = False
         self.credentials_client = CredentialsAPIClient()
+        # Pool de pages pour réutilisation
+        self.active_pages: Dict[str, Page] = {}  # conversation_url -> page
         
     async def initialize(self, headless_override: bool = None) -> None:
         """
@@ -144,6 +146,16 @@ class BrowserAutomation:
     async def cleanup(self) -> None:
         """Nettoie les ressources du navigateur"""
         try:
+            # Fermer toutes les pages actives
+            for conversation_url, page in list(self.active_pages.items()):
+                try:
+                    if not page.is_closed():
+                        await page.close()
+                except Exception as e:
+                    logger.warning("Erreur lors de la fermeture d'une page", url=conversation_url, error=str(e))
+            
+            self.active_pages.clear()
+            
             if self.context:
                 # Sauvegarder seulement si on utilise le mode temporaire (avec browser)
                 if self.browser and not settings.use_persistent_context:
@@ -168,6 +180,83 @@ class BrowserAutomation:
             
         except Exception as e:
             logger.error("Erreur lors du nettoyage", error=str(e))
+    
+    async def _get_or_create_page(self, conversation_url: str = "") -> Page:
+        """
+        Récupère une page existante ou en crée une nouvelle
+        
+        Args:
+            conversation_url: URL de conversation (vide pour nouvelle conversation)
+            
+        Returns:
+            Page Playwright réutilisable
+        """
+        # Nettoyer les pages fermées
+        closed_pages = []
+        for url, page in self.active_pages.items():
+            if page.is_closed():
+                closed_pages.append(url)
+        
+        for url in closed_pages:
+            del self.active_pages[url]
+            logger.info("Page fermée supprimée du pool", url=url)
+        
+        # Si une conversation_url est fournie, essayer de réutiliser la page existante
+        if conversation_url and conversation_url.strip():
+            # Vérifier si on a déjà une page pour cette conversation
+            if conversation_url in self.active_pages:
+                page = self.active_pages[conversation_url]
+                if not page.is_closed():
+                    logger.info("Réutilisation de la page existante", url=conversation_url)
+                    return page
+                else:
+                    # Page fermée, la supprimer du pool
+                    del self.active_pages[conversation_url]
+                    logger.info("Page fermée supprimée du pool", url=conversation_url)
+            
+            # Vérifier si une page existante pointe déjà vers cette conversation
+            for existing_url, page in self.active_pages.items():
+                if not page.is_closed():
+                    try:
+                        current_page_url = page.url
+                        # Extraire l'ID de conversation des deux URLs pour comparaison
+                        if self._extract_conversation_id(current_page_url) == self._extract_conversation_id(conversation_url):
+                            logger.info("Page existante trouvée pour cette conversation", 
+                                       existing_url=existing_url, 
+                                       target_url=conversation_url)
+                            # Mettre à jour la clé dans le pool
+                            del self.active_pages[existing_url]
+                            self.active_pages[conversation_url] = page
+                            return page
+                    except Exception as e:
+                        logger.warning("Erreur lors de la vérification de page existante", error=str(e))
+        
+        # Créer une nouvelle page
+        logger.info("Création d'une nouvelle page", conversation_url=conversation_url or "nouvelle_conversation")
+        page = await self.context.new_page()
+        
+        # L'ajouter au pool si on a une URL de conversation
+        if conversation_url and conversation_url.strip():
+            self.active_pages[conversation_url] = page
+        
+        return page
+    
+    def _extract_conversation_id(self, url: str) -> str:
+        """
+        Extrait l'ID de conversation d'une URL Manus.im
+        
+        Args:
+            url: URL complète (ex: https://www.manus.im/app/XBiN8PvUegJQRHuPMCnvPo)
+            
+        Returns:
+            ID de conversation (ex: XBiN8PvUegJQRHuPMCnvPo)
+        """
+        try:
+            if "/app/" in url:
+                return url.split("/app/")[-1].split("?")[0].split("#")[0]
+            return ""
+        except Exception:
+            return ""
     
     async def _get_storage_state(self) -> Optional[Dict[str, Any]]:
         """Récupère l'état de session stocké"""
@@ -334,13 +423,18 @@ class BrowserAutomation:
         try:
             logger.info("Envoi rapide pour récupérer URL de conversation")
             
-            # Création d'une nouvelle page
-            page = await self.context.new_page()
+            # Récupérer ou créer une page appropriée
+            page = await self._get_or_create_page(conversation_url)
             
             # Navigation vers Manus.ai ou conversation spécifique
             if conversation_url and conversation_url.strip():
-                logger.info("Navigation vers conversation existante", url=conversation_url)
-                await page.goto(conversation_url, wait_until="networkidle")
+                # Vérifier si on est déjà sur la bonne page
+                current_url = page.url
+                if self._extract_conversation_id(current_url) != self._extract_conversation_id(conversation_url):
+                    logger.info("Navigation vers conversation existante", url=conversation_url)
+                    await page.goto(conversation_url, wait_until="networkidle")
+                else:
+                    logger.info("Page déjà sur la bonne conversation", url=current_url)
                 return conversation_url  # URL déjà connue
             else:
                 logger.info("Navigation vers Manus.ai pour nouvelle conversation")
@@ -406,8 +500,11 @@ class BrowserAutomation:
             raise
             
         finally:
-            if page:
+            # Ne fermer la page que si c'est une nouvelle page temporaire (sans conversation_url)
+            if page and not conversation_url:
                 await page.close()
+                logger.info("Page temporaire fermée")
+            # Pour les conversations existantes, garder la page ouverte dans le pool
     
     async def wait_for_login_and_save_session(self, timeout_minutes: int = 10) -> bool:
         """
@@ -476,16 +573,25 @@ class BrowserAutomation:
         await self.ensure_initialized()
         
         page = None
+        page_created = False
         try:
-            logger.info("Début de l'envoi de message à Manus.ai", message_length=len(message))
+            logger.info("Début de l'envoi de message à Manus.ai", 
+                       message_length=len(message),
+                       conversation_url=conversation_url or "nouvelle_conversation")
             
-            # Création d'une nouvelle page
-            page = await self.context.new_page()
+            # Récupérer ou créer une page appropriée
+            page = await self._get_or_create_page(conversation_url)
+            page_created = conversation_url not in self.active_pages  # True si page nouvellement créée
             
             # Navigation vers Manus.ai ou conversation spécifique
             if conversation_url and conversation_url.strip():
-                logger.info("Navigation vers conversation existante", url=conversation_url)
-                await page.goto(conversation_url, wait_until="networkidle")
+                # Vérifier si on est déjà sur la bonne page
+                current_url = page.url
+                if self._extract_conversation_id(current_url) != self._extract_conversation_id(conversation_url):
+                    logger.info("Navigation vers conversation existante", url=conversation_url)
+                    await page.goto(conversation_url, wait_until="networkidle")
+                else:
+                    logger.info("Page déjà sur la bonne conversation", url=current_url)
             else:
                 logger.info("Navigation vers Manus.ai (nouvelle conversation)")
                 await page.goto(settings.manus_base_url, wait_until="networkidle")
@@ -543,8 +649,11 @@ class BrowserAutomation:
             }
             
         finally:
-            if page:
+            # Ne fermer la page que si c'est une nouvelle page temporaire (sans conversation_url)
+            if page and not conversation_url:
                 await page.close()
+                logger.info("Page temporaire fermée")
+            # Pour les conversations existantes, garder la page ouverte dans le pool
     
     async def _check_login_status(self, page: Page) -> bool:
         """Vérifie si l'utilisateur est connecté"""
