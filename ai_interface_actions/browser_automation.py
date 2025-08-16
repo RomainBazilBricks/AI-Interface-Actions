@@ -191,6 +191,11 @@ class BrowserAutomation:
         Returns:
             Page Playwright réutilisable
         """
+        logger.info("🔍 DEBUT _get_or_create_page", 
+                   conversation_url=conversation_url,
+                   pool_size=len(self.active_pages),
+                   pool_keys=list(self.active_pages.keys()))
+        
         # Nettoyer les pages fermées
         closed_pages = []
         for url, page in self.active_pages.items():
@@ -203,16 +208,18 @@ class BrowserAutomation:
         
         # Si une conversation_url est fournie, essayer de réutiliser la page existante
         if conversation_url and conversation_url.strip():
+            logger.info("🔄 RECHERCHE page existante pour URL", url=conversation_url)
+            
             # Vérifier si on a déjà une page pour cette conversation
             if conversation_url in self.active_pages:
                 page = self.active_pages[conversation_url]
                 if not page.is_closed():
-                    logger.info("Réutilisation de la page existante", url=conversation_url)
+                    logger.info("✅ REUTILISATION page existante trouvée", url=conversation_url)
                     return page
                 else:
                     # Page fermée, la supprimer du pool
                     del self.active_pages[conversation_url]
-                    logger.info("Page fermée supprimée du pool", url=conversation_url)
+                    logger.info("❌ Page fermée supprimée du pool", url=conversation_url)
             
             # Vérifier si une page existante pointe déjà vers cette conversation
             for existing_url, page in self.active_pages.items():
@@ -232,12 +239,15 @@ class BrowserAutomation:
                         logger.warning("Erreur lors de la vérification de page existante", error=str(e))
         
         # Créer une nouvelle page
-        logger.info("Création d'une nouvelle page", conversation_url=conversation_url or "nouvelle_conversation")
+        logger.warning("🆕 CREATION NOUVELLE PAGE", 
+                      conversation_url=conversation_url or "nouvelle_conversation",
+                      reason="Aucune page existante trouvée")
         page = await self.context.new_page()
         
         # L'ajouter au pool si on a une URL de conversation
         if conversation_url and conversation_url.strip():
             self.active_pages[conversation_url] = page
+            logger.info("📝 Page ajoutée au pool", url=conversation_url, pool_size=len(self.active_pages))
         
         return page
     
