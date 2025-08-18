@@ -44,6 +44,37 @@ class TaskStatusResponse(BaseModel):
     error_message: Optional[str] = Field(None, description="Message d'erreur")
 
 
+class FileUploadRequest(BaseModel):
+    """Requête pour uploader un fichier avec message optionnel"""
+    message: str = Field(default="", description="Message accompagnant le fichier (optionnel)", max_length=10000)
+    platform: str = Field(default="manus", description="Plateforme cible (manus, chatgpt, etc.)")
+    conversation_url: str = Field(default="", description="URL de conversation existante (optionnel - nouvelle conversation si vide)")
+    wait_for_response: bool = Field(default=True, description="Attendre la réponse de l'IA")
+    timeout_seconds: int = Field(default=60, description="Timeout pour la réponse", ge=10, le=300)
+
+
+class ZipUrlUploadRequest(BaseModel):
+    """Requête pour uploader un fichier .zip depuis une URL"""
+    zip_url: str = Field(..., description="URL du fichier .zip à télécharger", min_length=1)
+    message: str = Field(default="", description="Message accompagnant le fichier (optionnel)", max_length=10000)
+    platform: str = Field(default="manus", description="Plateforme cible (manus, chatgpt, etc.)")
+    conversation_url: str = Field(default="", description="URL de conversation existante (optionnel - nouvelle conversation si vide)")
+    wait_for_response: bool = Field(default=True, description="Attendre la réponse de l'IA")
+    timeout_seconds: int = Field(default=60, description="Timeout pour la réponse", ge=10, le=300)
+
+
+class FileUploadResponse(BaseModel):
+    """Réponse après upload d'un fichier"""
+    task_id: str = Field(..., description="ID unique de la tâche")
+    status: TaskStatus = Field(..., description="Statut de la tâche")
+    filename: str = Field(..., description="Nom du fichier uploadé")
+    message_sent: str = Field(..., description="Message envoyé avec le fichier")
+    conversation_url: Optional[str] = Field(None, description="URL de la conversation (pour continuer)")
+    ai_response: Optional[str] = Field(None, description="Réponse de l'IA (si disponible)")
+    execution_time_seconds: Optional[float] = Field(None, description="Temps d'exécution")
+    error_message: Optional[str] = Field(None, description="Message d'erreur (si échec)")
+
+
 class HealthResponse(BaseModel):
     """Réponse de santé de l'API"""
     status: str = Field(..., description="Statut de l'API")

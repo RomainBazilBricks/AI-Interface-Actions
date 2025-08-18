@@ -8,7 +8,6 @@ from typing import Dict, Any, Optional
 import structlog
 
 from ai_interface_actions.models import TaskStatus
-from ai_interface_actions.browser_automation import browser_manager
 
 logger = structlog.get_logger(__name__)
 
@@ -117,6 +116,8 @@ class TaskManager:
             
             if task.task_type == "send_message":
                 result = await self._execute_send_message_task(task)
+            elif task.task_type == "upload_zip_file":
+                result = await self._execute_upload_zip_file_task(task)
             else:
                 raise ValueError(f"Type de tâche non supporté: {task.task_type}")
             
@@ -142,6 +143,7 @@ class TaskManager:
             raise ValueError("Message vide")
         
         if platform == "manus":
+            from ai_interface_actions.browser_automation import browser_manager
             result = await browser_manager.send_message_to_manus(
                 message=message,
                 conversation_url=conversation_url,
@@ -154,6 +156,43 @@ class TaskManager:
         if not result.get("success", False):
             raise Exception(result.get("error", "Erreur inconnue"))
         
+        return result
+    
+    async def _execute_upload_zip_file_task(self, task: Task) -> Dict[str, Any]:
+        """Exécute une tâche d'upload de fichier .zip"""
+        params = task.params
+        
+        file_path = params.get("file_path", "")
+        filename = params.get("filename", "")
+        message = params.get("message", "")
+        platform = params.get("platform", "manus")
+        conversation_url = params.get("conversation_url", "")
+        wait_for_response = params.get("wait_for_response", True)
+        timeout_seconds = params.get("timeout_seconds", 60)
+        
+        if not file_path:
+            raise ValueError("Chemin de fichier manquant")
+        
+        if not filename:
+            raise ValueError("Nom de fichier manquant")
+        
+        if platform == "manus":
+            from ai_interface_actions.browser_automation import browser_manager
+            result = await browser_manager.upload_zip_file_to_manus(
+                file_path=file_path,
+                message=message,
+                conversation_url=conversation_url,
+                wait_for_response=wait_for_response,
+                timeout_seconds=timeout_seconds
+            )
+        else:
+            raise ValueError(f"Plateforme non supportée: {platform}")
+        
+        if not result.get("success", False):
+            raise Exception(result.get("error", "Erreur inconnue"))
+        
+        # Enrichir le résultat avec les informations de la tâche
+        result["filename"] = filename
         return result
     
     async def start_task_in_background(self, task_id: str) -> None:

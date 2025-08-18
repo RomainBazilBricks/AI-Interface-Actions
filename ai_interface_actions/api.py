@@ -4,17 +4,20 @@ API FastAPI pour l'automatisation des plateformes IA
 import asyncio
 import time
 import hashlib
+import tempfile
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Set
 
 import structlog
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Response, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 
 from ai_interface_actions import __version__
 from ai_interface_actions.config import settings
 from ai_interface_actions.models import (
-    MessageRequest, MessageResponse, TaskStatusResponse, HealthResponse, TaskStatus
+    MessageRequest, TaskStatusResponse, HealthResponse, TaskStatus,
+    FileUploadRequest, FileUploadResponse, ZipUrlUploadRequest
 )
 from ai_interface_actions.task_manager import task_manager
 from ai_interface_actions.browser_automation import browser_manager
@@ -226,7 +229,7 @@ async def health_check():
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
-# Endpoint /send-message supprimé - utilisez /send-message-quick à la place
+# Endpoint unique /send-message - comportement intelligent selon les paramètres
 
 
 @app.get("/task/{task_id}", response_model=TaskStatusResponse)
@@ -250,101 +253,6 @@ async def get_task_status(task_id: str):
         logger.error("Erreur lors de la récupération du statut", task_id=task_id, error=str(e))
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
-
-@app.post("/send-message-sync", response_model=MessageResponse)
-async def send_message_sync(request: MessageRequest, http_request: Request):
-    """
-    Envoie un message de manière synchrone (attend la réponse)
-    
-    ⚠️ Attention: Cet endpoint peut prendre du temps à répondre (jusqu'à timeout_seconds).
-    Utilisez plutôt l'endpoint asynchrone /send-message pour de meilleures performances.
-    """
-    try:
-        # Génération du hash de requête pour déduplication
-        client_ip = http_request.client.host if http_request.client else ""
-        user_agent = http_request.headers.get("user-agent", "")
-        request_hash = generate_request_hash(request, client_ip, user_agent)
-        
-        # Vérification des doublons
-        if is_duplicate_request(request_hash):
-            if request_hash in request_cache:
-                logger.info("Requête dupliquée détectée, retour du cache", request_hash=request_hash[:8])
-                cached_result = request_cache[request_hash]["result"]
-                return MessageResponse(**cached_result)
-            else:
-                logger.warning("Requête déjà en cours de traitement", request_hash=request_hash[:8])
-                raise HTTPException(status_code=429, detail="Requête identique déjà en cours de traitement")
-        
-        # Marquer la requête comme en cours
-        mark_request_processing(request_hash)
-        logger.info("Nouvelle requête acceptée", request_hash=request_hash[:8])
-        
-        logger.info("Demande d'envoi synchrone", 
-                   platform=request.platform, 
-                   message_length=len(request.message),
-                   request_hash=request_hash[:8])
-        
-        # Validation des paramètres
-        if not request.message.strip():
-            processing_requests.discard(request_hash)
-            raise HTTPException(status_code=400, detail="Le message ne peut pas être vide")
-        
-        if request.platform != "manus":
-            processing_requests.discard(request_hash)
-            raise HTTPException(status_code=400, detail=f"Plateforme '{request.platform}' non supportée")
-        
-        # Création et exécution immédiate de la tâche
-        task_params = {
-            "message": request.message,
-            "platform": request.platform,
-            "conversation_url": request.conversation_url,
-            "wait_for_response": request.wait_for_response,
-            "timeout_seconds": request.timeout_seconds
-        }
-        
-        task_id = task_manager.create_task("send_message", task_params)
-        
-        # Exécution synchrone
-        await task_manager.execute_task(task_id)
-        
-        # Récupération du résultat
-        task = task_manager.get_task(task_id)
-        if not task:
-            processing_requests.discard(request_hash)
-            raise HTTPException(status_code=500, detail="Erreur lors de la récupération de la tâche")
-        
-        if task.status == TaskStatus.FAILED:
-            processing_requests.discard(request_hash)
-            raise HTTPException(status_code=500, detail=task.error_message or "Échec de la tâche")
-        
-        result = task.result or {}
-        
-        response_data = {
-            "task_id": task_id,
-            "status": task.status,
-            "message_sent": request.message,
-            "conversation_url": result.get("conversation_url"),
-            "ai_response": result.get("ai_response"),
-            "execution_time_seconds": task.execution_time_seconds,
-            "error_message": task.error_message
-        }
-        
-        # Cacher le résultat
-        complete_request(request_hash, response_data)
-        
-        return MessageResponse(**response_data)
-        
-    except HTTPException:
-        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur HTTP
-        if 'request_hash' in locals():
-            processing_requests.discard(request_hash)
-        raise
-    except Exception as e:
-        # S'assurer que la requête est retirée du cache de traitement en cas d'erreur
-        if 'request_hash' in locals():
-            processing_requests.discard(request_hash)
-        logger.error("Erreur lors de l'envoi synchrone", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
 @app.delete("/task/{task_id}")
@@ -423,16 +331,231 @@ async def setup_manual_login(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
+@app.post("/upload-zip", response_model=FileUploadResponse)
+async def upload_zip_file(
+    file: UploadFile = File(...),
+    message: str = Form(default=""),
+    platform: str = Form(default="manus"),
+    conversation_url: str = Form(default=""),
+    wait_for_response: bool = Form(default=True),
+    timeout_seconds: int = Form(default=60)
+):
+    """
+    Upload un fichier .zip vers Manus.ai avec message optionnel
+    
+    📎 Fonctionnalités :
+    - ✅ Upload de fichiers .zip uniquement
+    - ✅ Message d'accompagnement optionnel
+    - ✅ Réutilisation de conversations existantes
+    - ✅ Traitement asynchrone avec suivi de tâche
+    - ✅ Gestion automatique des erreurs
+    
+    📝 Utilisation :
+    ```bash
+    curl -X POST "http://localhost:8000/upload-zip" \
+      -F "file=@mon_fichier.zip" \
+      -F "message=Analyse ce fichier zip" \
+      -F "platform=manus"
+    ```
+    """
+    try:
+        logger.info("Début d'upload de fichier .zip", 
+                   filename=file.filename,
+                   content_type=file.content_type,
+                   message_length=len(message))
+        
+        # Validation du fichier
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="Nom de fichier manquant")
+        
+        if not file.filename.lower().endswith('.zip'):
+            raise HTTPException(status_code=400, detail="Seuls les fichiers .zip sont acceptés")
+        
+        # Validation des paramètres
+        if timeout_seconds < 10 or timeout_seconds > 300:
+            raise HTTPException(status_code=400, detail="timeout_seconds doit être entre 10 et 300")
+        
+        # Lire le contenu du fichier
+        file_content = await file.read()
+        if len(file_content) == 0:
+            raise HTTPException(status_code=400, detail="Fichier vide")
+        
+        # Limite de taille (50MB par exemple)
+        max_size = 50 * 1024 * 1024  # 50MB
+        if len(file_content) > max_size:
+            raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max: {max_size//1024//1024}MB)")
+        
+        # Créer un fichier temporaire
+        temp_file_fd, temp_file_path = tempfile.mkstemp(suffix='.zip', prefix='manus_upload_')
+        try:
+            with os.fdopen(temp_file_fd, 'wb') as temp_file:
+                temp_file.write(file_content)
+            
+            # Créer une tâche pour l'upload
+            task_id = task_manager.create_task(
+                task_type="upload_zip_file",
+                params={
+                    "file_path": temp_file_path,
+                    "filename": file.filename,
+                    "message": message,
+                    "platform": platform,
+                    "conversation_url": conversation_url,
+                    "wait_for_response": wait_for_response,
+                    "timeout_seconds": timeout_seconds
+                }
+            )
+            
+            # Démarrer la tâche en arrière-plan
+            await task_manager.start_task_in_background(task_id)
+            
+            logger.info("Tâche d'upload créée avec succès", 
+                       task_id=task_id,
+                       filename=file.filename)
+            
+            return FileUploadResponse(
+                task_id=task_id,
+                status=TaskStatus.PENDING,
+                filename=file.filename,
+                message_sent=message,
+                conversation_url=None,
+                ai_response=None,
+                execution_time_seconds=None,
+                error_message=None
+            )
+            
+        except Exception as e:
+            # Nettoyer le fichier temporaire en cas d'erreur
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+            raise e
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de l'upload de fichier", error=str(e), filename=file.filename if file else "unknown")
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
+@app.post("/upload-zip-from-url", response_model=FileUploadResponse)
+async def upload_zip_from_url(request: ZipUrlUploadRequest):
+    """
+    Upload un fichier .zip depuis une URL vers Manus.ai
+    
+    📎 Fonctionnalités :
+    - ✅ Téléchargement automatique depuis n'importe quelle URL
+    - ✅ Validation de taille et type de fichier
+    - ✅ Message d'accompagnement optionnel
+    - ✅ Réutilisation de conversations existantes
+    - ✅ Traitement asynchrone avec suivi de tâche
+    - ✅ Gestion automatique des erreurs et nettoyage
+    
+    📝 Utilisation :
+    ```bash
+    curl -X POST "http://localhost:8000/upload-zip-from-url" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "zip_url": "https://example.com/mon-fichier.zip",
+        "message": "Analyse ce fichier zip téléchargé",
+        "platform": "manus"
+      }'
+    ```
+    
+    📊 Limites :
+    - Taille maximale : 100MB
+    - Timeout de téléchargement : 30s
+    - Formats supportés : .zip uniquement
+    """
+    try:
+        logger.info("Début d'upload de fichier .zip depuis URL", 
+                   zip_url=request.zip_url,
+                   message_length=len(request.message))
+        
+        # Import local pour éviter les dépendances circulaires
+        from ai_interface_actions.zip_downloader import zip_downloader
+        
+        # Validation de l'URL
+        if not zip_downloader.validate_zip_url(request.zip_url):
+            raise HTTPException(status_code=400, detail=f"URL invalide: {request.zip_url}")
+        
+        # Validation des paramètres
+        if request.timeout_seconds < 10 or request.timeout_seconds > 300:
+            raise HTTPException(status_code=400, detail="timeout_seconds doit être entre 10 et 300")
+        
+        # Télécharger le fichier .zip
+        logger.info("Téléchargement du fichier .zip depuis l'URL")
+        try:
+            temp_file_path, original_filename = zip_downloader.download_zip_from_url(request.zip_url)
+        except Exception as e:
+            logger.error("Erreur lors du téléchargement", zip_url=request.zip_url, error=str(e))
+            raise HTTPException(status_code=400, detail=f"Erreur de téléchargement: {str(e)}")
+        
+        # Créer une tâche pour l'upload
+        task_id = task_manager.create_task(
+            task_type="upload_zip_file",
+            params={
+                "file_path": temp_file_path,
+                "filename": original_filename,
+                "message": request.message,
+                "platform": request.platform,
+                "conversation_url": request.conversation_url,
+                "wait_for_response": request.wait_for_response,
+                "timeout_seconds": request.timeout_seconds,
+                "source_url": request.zip_url  # Ajouter l'URL source pour traçabilité
+            }
+        )
+        
+        # Démarrer la tâche en arrière-plan
+        await task_manager.start_task_in_background(task_id)
+        
+        logger.info("Tâche d'upload depuis URL créée avec succès", 
+                   task_id=task_id,
+                   filename=original_filename,
+                   zip_url=request.zip_url)
+        
+        return FileUploadResponse(
+            task_id=task_id,
+            status=TaskStatus.PENDING,
+            filename=original_filename,
+            message_sent=request.message,
+            conversation_url=None,
+            ai_response=None,
+            execution_time_seconds=None,
+            error_message=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors de l'upload depuis URL", error=str(e), zip_url=request.zip_url)
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
+
+
 @app.post("/send-message")
 async def send_message(request: MessageRequest, http_request: Request):
     """
-    Endpoint unifié pour envoyer des messages - s'adapte selon les paramètres
+    Endpoint unique et intelligent pour envoyer des messages à Manus.ai
     
-    Comportement intelligent :
-    - Si conversation_url fournie : Envoi direct dans la conversation existante (réutilise la page)
-    - Si conversation_url vide : Crée une nouvelle conversation et retourne l'URL rapidement
+    🧠 Comportement adaptatif selon les paramètres :
     
-    Évite les nouveaux onglets en réutilisant les pages existantes pour les conversations connues.
+    📝 Avec conversation_url :
+    - Réutilise la page existante (pas de nouvel onglet)
+    - Envoi synchrone immédiat dans la conversation
+    - Retourne la réponse complète avec ai_response
+    - Status: "completed"
+    
+    🆕 Sans conversation_url :
+    - Crée une nouvelle conversation
+    - Retourne l'URL rapidement
+    - Traitement en arrière-plan si wait_for_response=true
+    - Status: "url_ready"
+    
+    ✅ Avantages :
+    - Déduplication automatique des requêtes
+    - Pool de pages réutilisables
+    - Logs détaillés pour debugging
+    - Gestion intelligente des erreurs
     """
     try:
         # Génération du hash de requête pour déduplication
@@ -524,38 +647,45 @@ async def send_message(request: MessageRequest, http_request: Request):
             return response_data
         
         else:
-            # Nouvelle conversation : récupération rapide de l'URL
-            logger.info("Nouvelle conversation, récupération rapide de l'URL")
+            # Nouvelle conversation : envoi direct et complet
+            logger.info("Nouvelle conversation, envoi direct avec réponse complète")
             
-            conversation_url = await browser_manager.get_conversation_url_quickly(
+            # Envoi direct pour éviter les doubles appels
+            result = await browser_manager.send_message_to_manus(
                 message=request.message,
-                conversation_url=request.conversation_url,
-                max_wait_seconds=8
+                conversation_url="",  # Nouvelle conversation
+                wait_for_response=request.wait_for_response,
+                timeout_seconds=request.timeout_seconds
             )
             
-            # Lancer la tâche complète en arrière-plan pour la réponse IA
-            if request.wait_for_response:
-                task_params = {
-                    "message": request.message,
-                    "platform": request.platform,
-                    "conversation_url": conversation_url,
-                    "wait_for_response": True,
-                    "timeout_seconds": request.timeout_seconds
-                }
-                
-                task_id = task_manager.create_task("send_message", task_params)
-                asyncio.create_task(task_manager.execute_task(task_id))
-            else:
-                task_id = None
+            if not result.get("success", False):
+                processing_requests.discard(request_hash)
+                raise HTTPException(status_code=500, detail=result.get("error", "Erreur lors de l'envoi"))
+            
+            # Créer une tâche pour le tracking (déjà terminée)
+            task_id = task_manager.create_task("send_message", {
+                "message": request.message,
+                "platform": request.platform,
+                "conversation_url": result.get("conversation_url", ""),
+                "wait_for_response": request.wait_for_response,
+                "timeout_seconds": request.timeout_seconds
+            })
+            
+            # Marquer la tâche comme terminée immédiatement
+            task = task_manager.get_task(task_id)
+            if task:
+                task.complete_execution(result)
+            
+            conversation_url = result.get("conversation_url", "")
             
             response_data = {
                 "task_id": task_id,
-                "status": "url_ready",
+                "status": "completed",
                 "message_sent": request.message,
                 "conversation_url": conversation_url,
-                "quick_response": True,
-                "message": f"Nouvelle conversation créée. URL disponible immédiatement.",
-                "wait_for_ai_response": request.wait_for_response
+                "ai_response": result.get("ai_response"),
+                "quick_response": False,  # Réponse complète maintenant
+                "message": "Nouvelle conversation créée et message envoyé avec succès"
             }
             
             # Cacher le résultat

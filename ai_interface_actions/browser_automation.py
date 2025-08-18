@@ -963,6 +963,239 @@ class BrowserAutomation:
             logger.error("Erreur lors du login automatique", error=str(e))
             return False
 
+    async def upload_zip_file_to_manus(self, file_path: str, message: str = "", conversation_url: str = "", wait_for_response: bool = True, timeout_seconds: int = 60) -> Dict[str, Any]:
+        """
+        Upload un fichier .zip vers Manus.ai via drag & drop
+        
+        Args:
+            file_path: Chemin vers le fichier .zip local
+            message: Message accompagnant le fichier
+            conversation_url: URL de conversation existante (optionnel)
+            wait_for_response: Attendre la réponse de l'IA
+            timeout_seconds: Timeout pour la réponse
+            
+        Returns:
+            Dict contenant le résultat de l'opération
+        """
+        await self.ensure_initialized()
+        
+        page = None
+        try:
+            logger.info("Début de l'upload de fichier .zip vers Manus.ai", 
+                       file_path=file_path,
+                       conversation_url=conversation_url or "nouvelle_conversation")
+            
+            # Vérifier que le fichier existe et est un .zip
+            if not os.path.exists(file_path):
+                raise Exception(f"Fichier non trouvé: {file_path}")
+            
+            if not file_path.lower().endswith('.zip'):
+                raise Exception("Seuls les fichiers .zip sont supportés")
+            
+            # Récupérer ou créer une page appropriée
+            page = await self._get_or_create_page(conversation_url)
+            
+            # Navigation vers Manus.ai ou conversation spécifique
+            if conversation_url and conversation_url.strip():
+                current_url = page.url
+                if self._extract_conversation_id(current_url) != self._extract_conversation_id(conversation_url):
+                    logger.info("Navigation vers conversation existante", url=conversation_url)
+                    await page.goto(conversation_url, wait_until="networkidle")
+                else:
+                    logger.info("Page déjà sur la bonne conversation", url=current_url)
+            else:
+                logger.info("Navigation vers Manus.ai (nouvelle conversation)")
+                await page.goto(settings.manus_base_url, wait_until="networkidle")
+            
+            # Attendre que l'interface soit chargée
+            await page.wait_for_timeout(3000)
+            
+            # Rechercher le champ de saisie pour identifier la zone de drop
+            message_input = await self._find_message_input(page)
+            if not message_input:
+                raise Exception("Impossible de trouver la zone de chat pour l'upload")
+            
+            logger.info("Zone de chat trouvée, préparation du drag & drop")
+            
+            # Lire le fichier en tant que buffer pour le drag & drop
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+            
+            filename = os.path.basename(file_path)
+            logger.info(f"Fichier lu: {filename}, taille: {len(file_content)} bytes")
+            
+            # Simuler le drag & drop avec Playwright
+            logger.info("Simulation du drag & drop du fichier .zip")
+            upload_result = await page.evaluate("""
+                async (fileData) => {
+                    const { fileName, fileContent } = fileData;
+                    
+                    try {
+                        // Créer un objet File à partir du buffer
+                        const uint8Array = new Uint8Array(fileContent);
+                        const file = new File([uint8Array], fileName, { 
+                            type: 'application/zip',
+                            lastModified: Date.now()
+                        });
+                        
+                        // Chercher la zone de drop (plusieurs sélecteurs possibles)
+                        const dropZoneSelectors = [
+                            'textarea[placeholder*="Attribuez"]',
+                            'textarea[placeholder*="posez"]',
+                            'textarea[placeholder*="message"]',
+                            '.chat-input-container',
+                            '.message-input-container',
+                            '.chat-container',
+                            '.main-content',
+                            'main'
+                        ];
+                        
+                        let dropZone = null;
+                        for (const selector of dropZoneSelectors) {
+                            dropZone = document.querySelector(selector);
+                            if (dropZone) {
+                                console.log('Zone de drop trouvée:', selector);
+                                break;
+                            }
+                        }
+                        
+                        if (!dropZone) {
+                            throw new Error('Aucune zone de drop trouvée');
+                        }
+                        
+                        // Créer les événements de drag & drop
+                        const dataTransfer = new DataTransfer();
+                        dataTransfer.items.add(file);
+                        
+                        // Simuler la séquence complète de drag & drop
+                        const events = [
+                            new DragEvent('dragenter', {
+                                bubbles: true,
+                                cancelable: true,
+                                dataTransfer: dataTransfer
+                            }),
+                            new DragEvent('dragover', {
+                                bubbles: true,
+                                cancelable: true,
+                                dataTransfer: dataTransfer
+                            }),
+                            new DragEvent('drop', {
+                                bubbles: true,
+                                cancelable: true,
+                                dataTransfer: dataTransfer
+                            })
+                        ];
+                        
+                        // Déclencher les événements avec des délais
+                        for (const event of events) {
+                            dropZone.dispatchEvent(event);
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                        
+                        // Vérifier si un input file est disponible comme fallback
+                        const fileInput = document.querySelector('input[type="file"]');
+                        if (fileInput) {
+                            console.log('Input file trouvé comme fallback');
+                            // Simuler la sélection de fichier sur l'input
+                            const dt = new DataTransfer();
+                            dt.items.add(file);
+                            fileInput.files = dt.files;
+                            
+                            // Déclencher l'événement change
+                            const changeEvent = new Event('change', { bubbles: true });
+                            fileInput.dispatchEvent(changeEvent);
+                        }
+                        
+                        return {
+                            success: true,
+                            message: `Fichier ${fileName} uploadé avec succès`,
+                            dropZoneFound: !!dropZone,
+                            fileInputFound: !!fileInput
+                        };
+                        
+                    } catch (error) {
+                        return {
+                            success: false,
+                            error: error.message
+                        };
+                    }
+                }
+            """, {
+                "fileName": filename,
+                "fileContent": list(file_content)
+            })
+            
+            if not upload_result.get("success"):
+                raise Exception(f"Échec du drag & drop: {upload_result.get('error', 'Erreur inconnue')}")
+            
+            logger.info("Drag & drop simulé avec succès", 
+                       drop_zone_found=upload_result.get("dropZoneFound"),
+                       file_input_found=upload_result.get("fileInputFound"))
+            
+            # Attendre que l'upload soit traité par l'interface
+            await page.wait_for_timeout(2000)
+            
+            # Ajouter le message d'accompagnement si fourni
+            if message.strip():
+                logger.info("Ajout du message d'accompagnement")
+                message_input = await self._find_message_input(page)
+                if message_input:
+                    await message_input.fill(message)
+                    logger.info("Message d'accompagnement ajouté")
+            
+            # Envoyer le message (avec le fichier)
+            logger.info("Envoi du message avec le fichier")
+            await self._send_message(page)
+            
+            # Attendre la réponse si demandé
+            ai_response = None
+            if wait_for_response:
+                logger.info("Attente de la réponse de l'IA", timeout=timeout_seconds)
+                ai_response = await self._wait_for_ai_response(page, timeout_seconds)
+            
+            # Récupérer l'URL finale de la conversation
+            final_url = page.url
+            logger.info("Fichier .zip envoyé avec succès", 
+                       filename=filename,
+                       conversation_url=final_url)
+            
+            return {
+                "success": True,
+                "filename": filename,
+                "file_path": file_path,
+                "message_sent": message,
+                "conversation_url": final_url,
+                "ai_response": ai_response,
+                "page_url": final_url
+            }
+            
+        except TimeoutError as e:
+            logger.error("Timeout lors de l'upload du fichier", error=str(e))
+            return {
+                "success": False,
+                "error": f"Timeout: {str(e)}",
+                "filename": os.path.basename(file_path) if file_path else "unknown",
+                "conversation_url": page.url if page else None
+            }
+            
+        except Exception as e:
+            logger.error("Erreur lors de l'upload du fichier", error=str(e))
+            return {
+                "success": False,
+                "error": str(e),
+                "filename": os.path.basename(file_path) if file_path else "unknown",
+                "conversation_url": page.url if page else None
+            }
+            
+        finally:
+            # Nettoyer le fichier temporaire
+            try:
+                if file_path and os.path.exists(file_path) and file_path.startswith('/tmp/'):
+                    os.unlink(file_path)
+                    logger.info("Fichier temporaire nettoyé", file_path=file_path)
+            except Exception as e:
+                logger.warning("Impossible de nettoyer le fichier temporaire", file_path=file_path, error=str(e))
+
 
 # Instance globale du gestionnaire de navigateur
 browser_manager = BrowserAutomation() 
