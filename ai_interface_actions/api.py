@@ -391,34 +391,53 @@ async def upload_zip_file(
             with os.fdopen(temp_file_fd, 'wb') as temp_file:
                 temp_file.write(file_content)
             
-            # Créer une tâche pour l'upload
-            task_id = task_manager.create_task(
-                task_type="upload_zip_file",
-                params={
-                    "file_path": temp_file_path,
-                    "filename": file.filename,
-                    "message": message,
-                    "platform": platform,
-                    "conversation_url": conversation_url,
-                    "wait_for_response": wait_for_response,
-                    "timeout_seconds": timeout_seconds
-                }
+            # Exécution SYNCHRONE comme send-message
+            logger.info("Début d'upload synchrone de fichier", 
+                       filename=file.filename)
+            
+            # Import local pour éviter les dépendances circulaires
+            from ai_interface_actions.browser_automation import browser_manager
+            
+            # Upload direct et synchrone
+            result = await browser_manager.upload_zip_file_to_manus(
+                file_path=temp_file_path,
+                message=message,
+                conversation_url=conversation_url,
+                wait_for_response=False,  # Ne pas attendre la réponse IA pour retourner l'URL
+                timeout_seconds=timeout_seconds
             )
             
-            # Démarrer la tâche en arrière-plan
-            await task_manager.start_task_in_background(task_id)
+            if not result.get("success", False):
+                raise HTTPException(status_code=500, detail=result.get("error", "Erreur lors de l'upload"))
             
-            logger.info("Tâche d'upload créée avec succès", 
+            # Créer une tâche pour le tracking (déjà terminée pour l'URL)
+            task_id = task_manager.create_task("upload_zip_file", {
+                "file_path": temp_file_path,
+                "filename": file.filename,
+                "message": message,
+                "platform": platform,
+                "conversation_url": result.get("conversation_url", ""),
+                "wait_for_response": wait_for_response,
+                "timeout_seconds": timeout_seconds
+            })
+            
+            # Marquer la tâche comme terminée immédiatement (pour l'URL)
+            task = task_manager.get_task(task_id)
+            if task:
+                task.complete_execution(result)
+            
+            logger.info("Upload de fichier terminé avec succès", 
                        task_id=task_id,
-                       filename=file.filename)
+                       filename=file.filename,
+                       conversation_url=result.get("conversation_url"))
             
             return FileUploadResponse(
                 task_id=task_id,
-                status=TaskStatus.PENDING,
+                status=TaskStatus.COMPLETED,  # ✅ Directement completed
                 filename=file.filename,
                 message_sent=message,
-                conversation_url=None,
-                ai_response=None,
+                conversation_url=result.get("conversation_url"),  # ✅ URL immédiatement disponible
+                ai_response=result.get("ai_response"),  # Peut être None si wait_for_response=False
                 execution_time_seconds=None,
                 error_message=None
             )
@@ -491,36 +510,55 @@ async def upload_zip_from_url(request: ZipUrlUploadRequest):
             logger.error("Erreur lors du téléchargement", zip_url=request.zip_url, error=str(e))
             raise HTTPException(status_code=400, detail=f"Erreur de téléchargement: {str(e)}")
         
-        # Créer une tâche pour l'upload
-        task_id = task_manager.create_task(
-            task_type="upload_zip_file",
-            params={
-                "file_path": temp_file_path,
-                "filename": original_filename,
-                "message": request.message,
-                "platform": request.platform,
-                "conversation_url": request.conversation_url,
-                "wait_for_response": request.wait_for_response,
-                "timeout_seconds": request.timeout_seconds,
-                "source_url": request.zip_url  # Ajouter l'URL source pour traçabilité
-            }
+        # Exécution SYNCHRONE comme send-message
+        logger.info("Début d'upload synchrone depuis URL", 
+                   zip_url=request.zip_url,
+                   filename=original_filename)
+        
+        # Import local pour éviter les dépendances circulaires
+        from ai_interface_actions.browser_automation import browser_manager
+        
+        # Upload direct et synchrone
+        result = await browser_manager.upload_zip_file_to_manus(
+            file_path=temp_file_path,
+            message=request.message,
+            conversation_url=request.conversation_url,
+            wait_for_response=False,  # Ne pas attendre la réponse IA pour retourner l'URL
+            timeout_seconds=request.timeout_seconds
         )
         
-        # Démarrer la tâche en arrière-plan
-        await task_manager.start_task_in_background(task_id)
+        if not result.get("success", False):
+            raise HTTPException(status_code=500, detail=result.get("error", "Erreur lors de l'upload"))
         
-        logger.info("Tâche d'upload depuis URL créée avec succès", 
+        # Créer une tâche pour le tracking (déjà terminée pour l'URL)
+        task_id = task_manager.create_task("upload_zip_file", {
+            "file_path": temp_file_path,
+            "filename": original_filename,
+            "message": request.message,
+            "platform": request.platform,
+            "conversation_url": result.get("conversation_url", ""),
+            "wait_for_response": request.wait_for_response,
+            "timeout_seconds": request.timeout_seconds,
+            "source_url": request.zip_url
+        })
+        
+        # Marquer la tâche comme terminée immédiatement (pour l'URL)
+        task = task_manager.get_task(task_id)
+        if task:
+            task.complete_execution(result)
+        
+        logger.info("Upload depuis URL terminé avec succès", 
                    task_id=task_id,
                    filename=original_filename,
-                   zip_url=request.zip_url)
+                   conversation_url=result.get("conversation_url"))
         
         return FileUploadResponse(
             task_id=task_id,
-            status=TaskStatus.PENDING,
+            status=TaskStatus.COMPLETED,  # ✅ Directement completed
             filename=original_filename,
             message_sent=request.message,
-            conversation_url=None,
-            ai_response=None,
+            conversation_url=result.get("conversation_url"),  # ✅ URL immédiatement disponible
+            ai_response=result.get("ai_response"),  # Peut être None si wait_for_response=False
             execution_time_seconds=None,
             error_message=None
         )

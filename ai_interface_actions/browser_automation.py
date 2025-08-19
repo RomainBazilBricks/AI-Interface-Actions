@@ -268,6 +268,36 @@ class BrowserAutomation:
         except Exception:
             return ""
     
+    def _is_valid_manus_url(self, url: str) -> bool:
+        """Vérifie si une URL est une URL Manus.ai valide"""
+        if not url:
+            return False
+        
+        try:
+            # Vérifier que c'est une URL Manus.ai
+            valid_domains = ["manus.im", "manus.ai", "www.manus.im", "www.manus.ai"]
+            for domain in valid_domains:
+                if domain in url.lower():
+                    return True
+            
+            # Vérifier que ce n'est pas une URL de fallback générique
+            invalid_patterns = [
+                "fallback-conversation-url.com",
+                "example.com", 
+                "localhost",
+                "127.0.0.1",
+                "about:blank"
+            ]
+            
+            for pattern in invalid_patterns:
+                if pattern in url.lower():
+                    return False
+                    
+            return False
+            
+        except Exception:
+            return False
+    
     async def _get_storage_state(self) -> Optional[Dict[str, Any]]:
         """Récupère l'état de session stocké"""
         try:
@@ -484,6 +514,9 @@ class BrowserAutomation:
             await message_input.fill(message)
             await self._send_message(page)
             
+            # Gérer le popup "Wide Research" s'il apparaît
+            await self._handle_wide_research_popup(page)
+            
             # Attendre que l'URL change (nouvelle conversation créée)
             start_time = asyncio.get_event_loop().time()
             initial_url = page.url
@@ -498,10 +531,22 @@ class BrowserAutomation:
                 
                 await asyncio.sleep(0.5)
             
-            # Fallback : retourner l'URL actuelle même si pas changée
+            # Fallback : vérifier si on a au moins une URL Manus.ai valide
             final_url = page.url
-            logger.warning("URL finale après timeout", url=final_url)
-            return final_url
+            if self._is_valid_manus_url(final_url):
+                logger.warning("URL finale après timeout (valide)", url=final_url)
+                return final_url
+            else:
+                logger.error("URL finale invalide après timeout", url=final_url)
+                # Essayer de naviguer vers Manus.ai et récupérer une URL valide
+                try:
+                    await page.goto(settings.manus_base_url, wait_until="networkidle")
+                    corrected_url = page.url
+                    logger.info("URL corrigée vers Manus.ai", url=corrected_url)
+                    return corrected_url
+                except Exception as nav_error:
+                    logger.error("Impossible de corriger l'URL", error=str(nav_error))
+                    return final_url
             
         except Exception as e:
             logger.error("Erreur lors de la récupération rapide d'URL", error=str(e))
@@ -622,6 +667,9 @@ class BrowserAutomation:
             # Envoi du message
             await self._send_message(page)
             
+            # Gérer le popup "Wide Research" s'il apparaît
+            await self._handle_wide_research_popup(page)
+            
             # Attendre la réponse si demandé
             ai_response = None
             if wait_for_response:
@@ -630,6 +678,19 @@ class BrowserAutomation:
             
             # Récupérer l'URL finale de la conversation
             final_url = page.url
+            
+            # Valider que l'URL finale est bien une URL Manus.ai
+            if not self._is_valid_manus_url(final_url):
+                logger.warning("URL finale invalide détectée, correction...", invalid_url=final_url)
+                try:
+                    # Essayer de naviguer vers Manus.ai pour corriger
+                    await page.goto(settings.manus_base_url, wait_until="networkidle")
+                    corrected_url = page.url
+                    logger.info("URL corrigée", corrected_url=corrected_url)
+                    final_url = corrected_url
+                except Exception as e:
+                    logger.error("Impossible de corriger l'URL", error=str(e))
+            
             logger.info("Message envoyé avec succès", conversation_url=final_url)
             
             return {
@@ -927,6 +988,136 @@ class BrowserAutomation:
             logger.error(f"❌ Erreur lors de la récupération {attempt}", error=str(e))
             return False
     
+    async def _handle_wide_research_popup(self, page: Page, timeout_seconds: int = 10) -> bool:
+        """
+        Détecte et gère automatiquement le popup "Wide Research" en cliquant sur "continuer sans Wide Research"
+        
+        Args:
+            page: Page Playwright
+            timeout_seconds: Temps d'attente max pour la détection
+            
+        Returns:
+            True si popup détecté et géré, False sinon
+        """
+        try:
+            logger.info("🔍 Vérification de la présence du popup Wide Research")
+            
+            # Attendre un peu pour que le popup apparaisse si nécessaire
+            await page.wait_for_timeout(2000)
+            
+            # Sélecteurs pour détecter le popup Wide Research
+            wide_research_selectors = [
+                # Texte spécifique "Wide Research"
+                "text=Wide Research",
+                # Container avec l'image spécifique
+                "img[src*='mapReduceDarkIcon']",
+                # Texte "Analyse complète de tous les documents"
+                "text=Analyse complète de tous les documents",
+                # Container général du popup
+                "div:has-text('Wide Research coûtera')",
+            ]
+            
+            # Vérifier si le popup est présent
+            popup_detected = False
+            for selector in wide_research_selectors:
+                try:
+                    element = page.locator(selector).first
+                    if await element.count() > 0 and await element.is_visible():
+                        logger.info("✅ Popup Wide Research détecté", selector=selector)
+                        popup_detected = True
+                        break
+                except Exception:
+                    continue
+            
+            if not popup_detected:
+                logger.info("ℹ️ Aucun popup Wide Research détecté")
+                return False
+            
+            # Sélecteurs pour le lien "continuer sans Wide Research"
+            skip_selectors = [
+                # Texte exact
+                "a:has-text('ou continuer sans Wide Research')",
+                # Lien avec classe cursor-pointer et underline
+                "a.cursor-pointer.underline:has-text('continuer sans Wide Research')",
+                # Texte partiel
+                "a:has-text('continuer sans')",
+                # Fallback avec tabindex
+                "a[tabindex='0']:has-text('continuer')",
+                # Très permissif
+                "a:has-text('Wide Research')",
+            ]
+            
+            # Essayer de cliquer sur le lien "continuer sans"
+            for i, selector in enumerate(skip_selectors):
+                try:
+                    skip_link = page.locator(selector).first
+                    count = await skip_link.count()
+                    
+                    if count > 0:
+                        is_visible = await skip_link.is_visible()
+                        logger.info(f"Lien 'continuer sans' testé [{i+1}/{len(skip_selectors)}]", 
+                                   selector=selector, 
+                                   count=count, 
+                                   visible=is_visible)
+                        
+                        if is_visible:
+                            # Cliquer sur le lien
+                            await skip_link.click()
+                            logger.info("✅ Clic effectué sur 'continuer sans Wide Research'")
+                            
+                            # Attendre que le popup disparaisse
+                            await page.wait_for_timeout(2000)
+                            
+                            # Vérifier que le popup a bien disparu
+                            still_present = False
+                            for check_selector in wide_research_selectors:
+                                try:
+                                    element = page.locator(check_selector).first
+                                    if await element.count() > 0 and await element.is_visible():
+                                        still_present = True
+                                        break
+                                except Exception:
+                                    continue
+                            
+                            if not still_present:
+                                logger.info("✅ Popup Wide Research fermé avec succès")
+                                return True
+                            else:
+                                logger.warning("⚠️ Popup Wide Research toujours présent après clic")
+                        
+                except Exception as e:
+                    logger.debug(f"Erreur avec sélecteur [{i+1}/{len(skip_selectors)}]", 
+                               selector=selector, 
+                               error=str(e))
+                    continue
+            
+            # Si aucun sélecteur n'a fonctionné, essayer une approche très permissive
+            logger.warning("⚠️ Tentative de clic permissif sur tous les liens avec 'continuer'")
+            try:
+                all_links = page.locator("a")
+                count = await all_links.count()
+                
+                for i in range(count):
+                    link = all_links.nth(i)
+                    if await link.is_visible():
+                        text_content = await link.text_content() or ""
+                        if "continuer" in text_content.lower() and "wide research" in text_content.lower():
+                            logger.info(f"Lien permissif trouvé [{i+1}/{count}]", text=text_content)
+                            await link.click()
+                            logger.info("✅ Clic permissif effectué")
+                            await page.wait_for_timeout(2000)
+                            return True
+                            
+            except Exception as e:
+                logger.error("Erreur en mode permissif", error=str(e))
+            
+            logger.warning("⚠️ Impossible de fermer le popup Wide Research automatiquement")
+            return False
+            
+        except Exception as e:
+            logger.error("Erreur lors de la gestion du popup Wide Research", error=str(e))
+            return False
+    
     async def _send_message(self, page: Page) -> None:
         """Envoie le message avec protection contre les doubles clics"""
         # Sélecteurs possibles pour le bouton d'envoi
@@ -1126,7 +1317,7 @@ class BrowserAutomation:
             logger.error("Erreur lors du login automatique", error=str(e))
             return False
 
-    async def upload_zip_file_to_manus(self, file_path: str, message: str = "", conversation_url: str = "", wait_for_response: bool = True, timeout_seconds: int = 60) -> Dict[str, Any]:
+    async def upload_zip_file_to_manus(self, file_path: str, message: str = "", conversation_url: str = "", wait_for_response: bool = True, timeout_seconds: int = 60, url_callback=None) -> Dict[str, Any]:
         """
         Upload un fichier .zip vers Manus.ai via drag & drop
         
@@ -1312,6 +1503,18 @@ class BrowserAutomation:
             logger.info("Envoi du message avec le fichier")
             await self._send_message(page)
             
+            # Gérer le popup "Wide Research" s'il apparaît
+            await self._handle_wide_research_popup(page)
+            
+            # Récupérer l'URL dès qu'elle est disponible et notifier via callback
+            current_url = page.url
+            if url_callback and self._is_valid_manus_url(current_url):
+                logger.info("URL de conversation disponible, notification du callback", url=current_url)
+                try:
+                    await url_callback(current_url)
+                except Exception as e:
+                    logger.error("Erreur lors de l'appel du callback URL", error=str(e))
+            
             # Attendre la réponse si demandé
             ai_response = None
             if wait_for_response:
@@ -1320,6 +1523,19 @@ class BrowserAutomation:
             
             # Récupérer l'URL finale de la conversation
             final_url = page.url
+            
+            # Valider que l'URL finale est bien une URL Manus.ai
+            if not self._is_valid_manus_url(final_url):
+                logger.warning("URL finale invalide détectée lors de l'upload, correction...", invalid_url=final_url)
+                try:
+                    # Essayer de naviguer vers Manus.ai pour corriger
+                    await page.goto(settings.manus_base_url, wait_until="networkidle")
+                    corrected_url = page.url
+                    logger.info("URL corrigée après upload", corrected_url=corrected_url)
+                    final_url = corrected_url
+                except Exception as e:
+                    logger.error("Impossible de corriger l'URL après upload", error=str(e))
+            
             logger.info("Fichier .zip envoyé avec succès", 
                        filename=filename,
                        conversation_url=final_url)

@@ -10,6 +10,7 @@ class TaskStatus(str, Enum):
     """Statuts possibles d'une tâche"""
     PENDING = "pending"
     RUNNING = "running"
+    URL_READY = "url_ready"  # URL de conversation disponible, traitement en cours
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -42,6 +43,12 @@ class TaskStatusResponse(BaseModel):
     updated_at: str = Field(..., description="Dernière mise à jour")
     result: Optional[Dict[str, Any]] = Field(None, description="Résultat de la tâche")
     error_message: Optional[str] = Field(None, description="Message d'erreur")
+    execution_time_seconds: Optional[float] = Field(None, description="Temps d'exécution")
+    # Champs de commodité extraits du result
+    conversation_url: Optional[str] = Field(None, description="URL de conversation (dès qu'elle est disponible)")
+    message_sent: Optional[str] = Field(None, description="Message envoyé")
+    ai_response: Optional[str] = Field(None, description="Réponse de l'IA")
+    filename: Optional[str] = Field(None, description="Nom du fichier (pour uploads)")
 
 
 class FileUploadRequest(BaseModel):

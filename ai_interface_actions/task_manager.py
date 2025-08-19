@@ -60,6 +60,15 @@ class Task:
         self.execution_end_time = datetime.now()
         self.updated_at = datetime.now()
         self.error_message = error_message
+    
+    def update_with_url(self, conversation_url: str) -> None:
+        """Met à jour la tâche avec l'URL de conversation disponible"""
+        self.status = TaskStatus.URL_READY
+        self.updated_at = datetime.now()
+        if not self.result:
+            self.result = {}
+        self.result["conversation_url"] = conversation_url
+        logger.info("URL de conversation mise à jour", task_id=self.task_id, url=conversation_url)
 
 
 class TaskManager:
@@ -178,12 +187,19 @@ class TaskManager:
         
         if platform == "manus":
             from ai_interface_actions.browser_automation import browser_manager
+            
+            # Créer un callback pour mettre à jour l'URL dès qu'elle est disponible
+            async def url_ready_callback(url: str):
+                logger.info("URL de conversation prête, mise à jour de la tâche", task_id=task.task_id, url=url)
+                task.update_with_url(url)
+            
             result = await browser_manager.upload_zip_file_to_manus(
                 file_path=file_path,
                 message=message,
                 conversation_url=conversation_url,
                 wait_for_response=wait_for_response,
-                timeout_seconds=timeout_seconds
+                timeout_seconds=timeout_seconds,
+                url_callback=url_ready_callback
             )
         else:
             raise ValueError(f"Plateforme non supportée: {platform}")
@@ -205,6 +221,9 @@ class TaskManager:
         if not task:
             return None
         
+        # Extraire les champs de commodité du result
+        result = task.result or {}
+        
         return {
             "task_id": task.task_id,
             "status": task.status,
@@ -212,8 +231,23 @@ class TaskManager:
             "updated_at": task.updated_at.isoformat(),
             "result": task.result,
             "error_message": task.error_message,
-            "execution_time_seconds": task.execution_time_seconds
+            "execution_time_seconds": task.execution_time_seconds,
+            # Champs de commodité
+            "conversation_url": result.get("conversation_url"),
+            "message_sent": result.get("message_sent"),
+            "ai_response": result.get("ai_response"),
+            "filename": result.get("filename")
         }
+    
+    def update_task_url(self, task_id: str, conversation_url: str) -> bool:
+        """Met à jour l'URL de conversation d'une tâche"""
+        task = self.get_task(task_id)
+        if not task:
+            logger.warning("Tentative de mise à jour d'URL sur tâche inexistante", task_id=task_id)
+            return False
+        
+        task.update_with_url(conversation_url)
+        return True
     
     def cleanup_old_tasks(self, max_age_hours: int = 24) -> None:
         """Nettoie les anciennes tâches terminées"""
