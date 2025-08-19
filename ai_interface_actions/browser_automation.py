@@ -736,32 +736,105 @@ class BrowserAutomation:
             return False
     
     async def _find_message_input(self, page: Page) -> Optional[Any]:
-        """Trouve le champ de saisie de message"""
-        # Sélecteurs possibles pour le champ de message
-        selectors = [
-            "textarea[placeholder*='Attribuez une tâche']",  # Sélecteur spécifique Manus.ai
-            "textarea[placeholder*='posez une question']",   # Sélecteur spécifique Manus.ai
-            "textarea[placeholder*='message']",
-            "textarea[placeholder*='Message']",
-            "textarea[placeholder*='Tapez']",
-            "input[placeholder*='message']",
-            "input[placeholder*='Message']",
-            "[contenteditable='true']",
-            "textarea:not([readonly])",
-            ".message-input textarea",
-            "#message-input"
+        """Trouve le champ de saisie de message - intelligent et adaptatif selon le contexte"""
+        current_url = page.url
+        is_conversation_page = "/app/" in current_url
+        
+        logger.info("Recherche de zone de saisie", 
+                   url=current_url, 
+                   context="conversation" if is_conversation_page else "nouvelle")
+        
+        # Sélecteurs optimisés selon le contexte avec fallbacks intelligents
+        if is_conversation_page:
+            # Page de conversation existante - sélecteurs prioritaires
+            selectors = [
+                "textarea[placeholder*='Send message to Manus']",           # Exact match conversation
+                "textarea[placeholder*='Send message']",                    # Partiel conversation
+                "textarea[placeholder*='message to Manus']",                # Partiel spécifique
+                "textarea[placeholder*='message']",                         # Générique message
+                "textarea[placeholder*='Message']",                         # Générique Message (maj)
+            ]
+        else:
+            # Page d'accueil/nouvelle conversation - sélecteurs prioritaires  
+            selectors = [
+                "textarea[placeholder*='Assign a task or ask anything']",   # Exact match accueil
+                "textarea[placeholder*='Assign a task']",                   # Partiel accueil
+                "textarea[placeholder*='ask anything']",                    # Partiel accueil
+                "textarea[placeholder*='Attribuez une tâche']",             # Français
+                "textarea[placeholder*='posez une question']",              # Français
+            ]
+        
+        # Sélecteurs génériques permissifs (fallback pour les deux contextes)
+        fallback_selectors = [
+            "textarea[placeholder*='message']",                             # Générique message
+            "textarea[placeholder*='Message']",                             # Générique Message (maj)
+            "textarea[placeholder*='Tapez']",                               # Français générique
+            "textarea[placeholder*='Type']",                                # Anglais générique
+            "input[placeholder*='message']",                                # Input message
+            "input[placeholder*='Message']",                                # Input Message (maj)
+            "[contenteditable='true']",                                     # Contenteditable
+            "textarea:not([readonly]):not([disabled])",                     # Textarea non readonly/disabled
+            "textarea.resize-none",                                         # Classe CSS commune
+            ".message-input textarea",                                      # Classe wrapper
+            "#message-input",                                               # ID direct
+            "textarea[rows]",                                               # Textarea avec rows
+            "div[data-dashlane-rid] textarea",                              # Avec Dashlane (détecté dans le HTML)
         ]
         
-        for selector in selectors:
+        # Combiner les sélecteurs contextuels + fallbacks
+        all_selectors = selectors + fallback_selectors
+        
+        # Essayer chaque sélecteur avec logging détaillé
+        for i, selector in enumerate(all_selectors):
             try:
                 element = page.locator(selector).first
-                if await element.count() > 0 and await element.is_visible():
-                    logger.info("Champ de saisie trouvé", selector=selector)
-                    return element
-            except Exception:
+                count = await element.count()
+                
+                if count > 0:
+                    is_visible = await element.is_visible()
+                    is_enabled = not await element.is_disabled() if hasattr(element, 'is_disabled') else True
+                    
+                    logger.info(f"Sélecteur testé [{i+1}/{len(all_selectors)}]", 
+                               selector=selector, 
+                               count=count, 
+                               visible=is_visible,
+                               enabled=is_enabled,
+                               priority="contextuel" if i < len(selectors) else "fallback")
+                    
+                    if is_visible and is_enabled:
+                        logger.info("✅ Champ de saisie trouvé avec succès", 
+                                   selector=selector,
+                                   context="conversation" if is_conversation_page else "nouvelle")
+                        return element
+                else:
+                    logger.debug(f"Sélecteur sans résultat [{i+1}/{len(all_selectors)}]", selector=selector)
+                    
+            except Exception as e:
+                logger.debug(f"Erreur sélecteur [{i+1}/{len(all_selectors)}]", 
+                           selector=selector, 
+                           error=str(e))
                 continue
         
-        logger.warning("Aucun champ de saisie trouvé")
+        # Si aucun sélecteur ne fonctionne, essayer une approche très permissive
+        logger.warning("⚠️ Tentative de détection permissive avec tous les textarea")
+        try:
+            all_textareas = page.locator("textarea")
+            count = await all_textareas.count()
+            logger.info(f"Nombre total de textarea trouvés: {count}")
+            
+            for i in range(count):
+                textarea = all_textareas.nth(i)
+                if await textarea.is_visible() and not await textarea.is_disabled():
+                    placeholder = await textarea.get_attribute("placeholder") or ""
+                    logger.info(f"Textarea permissif [{i+1}/{count}]", placeholder=placeholder)
+                    
+                    # Accepter tout textarea visible et non désactivé
+                    logger.info("✅ Champ de saisie trouvé en mode permissif", placeholder=placeholder)
+                    return textarea
+        except Exception as e:
+            logger.error("Erreur en mode permissif", error=str(e))
+        
+        logger.error("❌ Aucun champ de saisie trouvé malgré tous les sélecteurs")
         return None
     
     async def _send_message(self, page: Page) -> None:
