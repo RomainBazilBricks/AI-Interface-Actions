@@ -465,12 +465,12 @@ class BrowserAutomation:
             if login_status:
                 logger.info("✅ Statut de connexion validé", url=current_url)
             
-            # Recherche du champ de saisie avec bypass Railway
-            message_input = await self._find_message_input(page)
+            # Recherche du champ de saisie avec récupération automatique et bypass Railway
+            message_input = await self._find_message_input_with_recovery(page, conversation_url)
             if not message_input:
                 # Bypass Railway : essayer de créer une URL de conversation directement
                 if "/app" in current_url and "/login" not in current_url:
-                    logger.warning("⚠️ BYPASS RAILWAY: Champ de saisie non trouvé - génération d'URL de conversation")
+                    logger.warning("⚠️ BYPASS RAILWAY: Champ de saisie non trouvé malgré récupération - génération d'URL de conversation")
                     # Générer une URL de conversation factice mais valide
                     import uuid
                     conversation_id = str(uuid.uuid4()).replace('-', '')[:22]  # Format Manus.im
@@ -478,7 +478,7 @@ class BrowserAutomation:
                     logger.info("🔄 URL de conversation générée", url=generated_url)
                     return generated_url
                 else:
-                    raise Exception("Impossible de trouver le champ de saisie")
+                    raise Exception("Impossible de trouver le champ de saisie malgré les tentatives de récupération")
             
             # Saisie et envoi du message
             await message_input.fill(message)
@@ -608,12 +608,12 @@ class BrowserAutomation:
             
             # Pas de vérification de connexion - l'utilisateur se connecte manuellement
             
-            # Recherche du champ de saisie de message
-            logger.info("Recherche du champ de saisie")
-            message_input = await self._find_message_input(page)
+            # Recherche du champ de saisie de message avec récupération automatique
+            logger.info("Recherche du champ de saisie avec système de récupération")
+            message_input = await self._find_message_input_with_recovery(page, conversation_url)
             
             if not message_input:
-                raise Exception("Impossible de trouver le champ de saisie de message")
+                raise Exception("Impossible de trouver le champ de saisie de message malgré les tentatives de récupération")
             
             # Saisie du message
             logger.info("Saisie du message")
@@ -837,6 +837,96 @@ class BrowserAutomation:
         logger.error("❌ Aucun champ de saisie trouvé malgré tous les sélecteurs")
         return None
     
+    async def _find_message_input_with_recovery(self, page: Page, conversation_url: str = "", max_retries: int = 2) -> Optional[Any]:
+        """
+        Trouve le champ de saisie avec système de récupération automatique
+        
+        Args:
+            page: Page Playwright
+            conversation_url: URL de conversation pour récupération
+            max_retries: Nombre max de tentatives de récupération
+            
+        Returns:
+            Element de saisie ou None si échec total
+        """
+        logger.info("🔍 Recherche de zone de saisie avec récupération automatique", 
+                   url=page.url, 
+                   conversation_url=conversation_url or "aucune",
+                   max_retries=max_retries)
+        
+        for attempt in range(max_retries + 1):
+            logger.info(f"🎯 Tentative {attempt + 1}/{max_retries + 1}")
+            
+            # Essayer de trouver le champ de saisie
+            message_input = await self._find_message_input(page)
+            
+            if message_input:
+                logger.info("✅ Zone de saisie trouvée avec succès", attempt=attempt + 1)
+                return message_input
+            
+            # Si échec et pas la dernière tentative, essayer la récupération
+            if attempt < max_retries:
+                logger.warning(f"❌ Zone de saisie non trouvée (tentative {attempt + 1})")
+                
+                # Stratégie de récupération selon le contexte
+                recovery_success = await self._attempt_recovery(page, conversation_url, attempt + 1)
+                
+                if not recovery_success:
+                    logger.warning(f"⚠️ Récupération {attempt + 1} échouée, tentative suivante...")
+                    continue
+                else:
+                    logger.info(f"✅ Récupération {attempt + 1} réussie, nouvelle tentative de détection...")
+                    # Continue la boucle pour retenter la détection
+            else:
+                logger.error("❌ Échec définitif : toutes les tentatives et récupérations ont échoué")
+        
+        return None
+    
+    async def _attempt_recovery(self, page: Page, conversation_url: str, attempt: int) -> bool:
+        """
+        Tente de récupérer la situation en rouvrant l'onglet de conversation
+        
+        Args:
+            page: Page Playwright actuelle
+            conversation_url: URL de conversation à rouvrir
+            attempt: Numéro de la tentative
+            
+        Returns:
+            True si récupération réussie, False sinon
+        """
+        try:
+            current_url = page.url
+            logger.info(f"🔄 Début récupération {attempt}", 
+                       current_url=current_url, 
+                       target_url=conversation_url or "page d'accueil")
+            
+            # Stratégie 1: Si on a une URL de conversation, y naviguer
+            if conversation_url and conversation_url.strip():
+                if current_url != conversation_url:
+                    logger.info("🔄 Navigation vers URL de conversation cible")
+                    await page.goto(conversation_url, wait_until="networkidle", timeout=15000)
+                    await page.wait_for_timeout(2000)  # Attendre stabilisation
+                    logger.info("✅ Navigation vers conversation terminée")
+                    return True
+                else:
+                    logger.info("🔄 Déjà sur la bonne URL, rechargement de la page")
+                    await page.reload(wait_until="networkidle", timeout=15000)
+                    await page.wait_for_timeout(2000)
+                    logger.info("✅ Rechargement terminé")
+                    return True
+            
+            # Stratégie 2: Si pas d'URL spécifique, aller à la page d'accueil
+            else:
+                logger.info("🔄 Navigation vers page d'accueil Manus.ai")
+                await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=15000)
+                await page.wait_for_timeout(2000)
+                logger.info("✅ Navigation vers accueil terminée")
+                return True
+                
+        except Exception as e:
+            logger.error(f"❌ Erreur lors de la récupération {attempt}", error=str(e))
+            return False
+    
     async def _send_message(self, page: Page) -> None:
         """Envoie le message avec protection contre les doubles clics"""
         # Sélecteurs possibles pour le bouton d'envoi
@@ -882,8 +972,8 @@ class BrowserAutomation:
         
         # Si aucun bouton trouvé, essayer Entrée (avec protection similaire)
         try:
-            # Vérifier qu'on est toujours dans le champ de saisie
-            message_input = await self._find_message_input(page)
+            # Vérifier qu'on est toujours dans le champ de saisie avec récupération
+            message_input = await self._find_message_input_with_recovery(page)
             if message_input:
                 await message_input.focus()
                 await page.keyboard.press("Enter")
@@ -892,7 +982,7 @@ class BrowserAutomation:
                 # Attendre un délai pour éviter les envois multiples
                 await page.wait_for_timeout(1000)
             else:
-                raise Exception("Champ de saisie non trouvé pour l'envoi via Entrée")
+                raise Exception("Champ de saisie non trouvé pour l'envoi via Entrée malgré récupération")
         except Exception as e:
             raise Exception(f"Impossible d'envoyer le message: {str(e)}")
     
@@ -1083,10 +1173,10 @@ class BrowserAutomation:
             # Attendre que l'interface soit chargée
             await page.wait_for_timeout(3000)
             
-            # Rechercher le champ de saisie pour identifier la zone de drop
-            message_input = await self._find_message_input(page)
+            # Rechercher le champ de saisie pour identifier la zone de drop avec récupération
+            message_input = await self._find_message_input_with_recovery(page, conversation_url)
             if not message_input:
-                raise Exception("Impossible de trouver la zone de chat pour l'upload")
+                raise Exception("Impossible de trouver la zone de chat pour l'upload malgré les tentatives de récupération")
             
             logger.info("Zone de chat trouvée, préparation du drag & drop")
             
@@ -1211,10 +1301,12 @@ class BrowserAutomation:
             # Ajouter le message d'accompagnement si fourni
             if message.strip():
                 logger.info("Ajout du message d'accompagnement")
-                message_input = await self._find_message_input(page)
+                message_input = await self._find_message_input_with_recovery(page, conversation_url)
                 if message_input:
                     await message_input.fill(message)
                     logger.info("Message d'accompagnement ajouté")
+                else:
+                    logger.warning("⚠️ Impossible de trouver la zone de saisie pour le message d'accompagnement")
             
             # Envoyer le message (avec le fichier)
             logger.info("Envoi du message avec le fichier")
