@@ -380,8 +380,8 @@ async def upload_zip_file(
         if len(file_content) == 0:
             raise HTTPException(status_code=400, detail="Fichier vide")
         
-        # Limite de taille (50MB par exemple)
-        max_size = 50 * 1024 * 1024  # 50MB
+        # Limite de taille (500MB par exemple)
+        max_size = 500 * 1024 * 1024  # 500MB
         if len(file_content) > max_size:
             raise HTTPException(status_code=400, detail=f"Fichier trop volumineux (max: {max_size//1024//1024}MB)")
         

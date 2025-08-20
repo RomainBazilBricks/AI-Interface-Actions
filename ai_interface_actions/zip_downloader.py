@@ -13,7 +13,7 @@ logger = structlog.get_logger(__name__)
 class ZipDownloader:
     """Gestionnaire de téléchargement de fichiers .zip"""
     
-    def __init__(self, timeout: int = 30, max_size: int = 100 * 1024 * 1024):  # 100MB par défaut
+    def __init__(self, timeout: int = 30, max_size: int = 1000 * 1024 * 1024):  # 1GB par défaut
         self.timeout = timeout
         self.max_size = max_size
     
