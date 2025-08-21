@@ -295,6 +295,90 @@ async def cancel_task(task_id: str):
         raise HTTPException(status_code=500, detail=f"Erreur interne: {str(e)}")
 
 
+@app.get("/debug/session-status")
+async def debug_session_status():
+    """
+    Endpoint de diagnostic pour vérifier l'état de session Manus.ai
+    
+    Utile pour diagnostiquer les problèmes de connexion et credentials
+    """
+    try:
+        logger.info("🔍 Début du diagnostic de session")
+        
+        # Import local pour éviter les dépendances circulaires
+        from ai_interface_actions.browser_automation import browser_manager
+        
+        # Initialiser le navigateur si nécessaire
+        await browser_manager.ensure_initialized()
+        
+        # Créer une page de test
+        page = await browser_manager._get_or_create_page("")
+        
+        # Naviguer vers Manus.ai
+        logger.info("Navigation vers Manus.ai pour diagnostic")
+        await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=15000)
+        
+        # Collecter les informations de diagnostic
+        diagnostic_info = await page.evaluate("""
+            () => {
+                return {
+                    url: window.location.href,
+                    title: document.title,
+                    cookies: document.cookie ? document.cookie.split(';').length : 0,
+                    localStorage: Object.keys(localStorage).length,
+                    sessionStorage: Object.keys(sessionStorage).length,
+                    textareas: Array.from(document.querySelectorAll('textarea')).map(t => ({
+                        placeholder: t.placeholder,
+                        visible: t.offsetParent !== null,
+                        disabled: t.disabled
+                    })),
+                    loginIndicators: {
+                        hasLoginButton: !!document.querySelector('button:has-text("Se connecter"), button:has-text("Sign in"), button:has-text("Login")'),
+                        hasEmailInput: !!document.querySelector('input[type="email"]'),
+                        hasPasswordInput: !!document.querySelector('input[type="password"]'),
+                    },
+                    bodyText: document.body.innerText.substring(0, 1000)
+                };
+            }
+        """)
+        
+        # Vérifier les credentials depuis les variables d'environnement
+        credentials_info = {
+            "manus_cookies_configured": bool(settings.manus_cookies),
+            "manus_session_token_configured": bool(settings.manus_session_token),
+            "manus_base_url": settings.manus_base_url
+        }
+        
+        # Déterminer le statut de connexion
+        is_logged_in = (
+            not diagnostic_info["loginIndicators"]["hasLoginButton"] and
+            not diagnostic_info["loginIndicators"]["hasEmailInput"] and
+            len(diagnostic_info["textareas"]) > 0
+        )
+        
+        logger.info("✅ Diagnostic de session terminé", 
+                   logged_in=is_logged_in,
+                   url=diagnostic_info["url"])
+        
+        return {
+            "status": "connected" if is_logged_in else "disconnected",
+            "timestamp": time.time(),
+            "page_info": diagnostic_info,
+            "credentials_info": credentials_info,
+            "browser_initialized": browser_manager.is_initialized,
+            "active_pages": len(browser_manager.active_pages)
+        }
+        
+    except Exception as e:
+        logger.error("Erreur lors du diagnostic de session", error=str(e))
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": time.time(),
+            "browser_initialized": browser_manager.is_initialized if 'browser_manager' in locals() else False
+        }
+
+
 @app.post("/setup-login")
 async def setup_manual_login(background_tasks: BackgroundTasks):
     """
@@ -528,7 +612,12 @@ async def upload_zip_from_url(request: ZipUrlUploadRequest):
         )
         
         if not result.get("success", False):
-            raise HTTPException(status_code=500, detail=result.get("error", "Erreur lors de l'upload"))
+            error_detail = result.get("error", "Erreur lors de l'upload")
+            logger.error("Échec de l'upload ZIP", 
+                        error=error_detail,
+                        filename=original_filename,
+                        conversation_url=request.conversation_url)
+            raise HTTPException(status_code=500, detail=f"Échec de l'upload: {error_detail}")
         
         # Créer une tâche pour le tracking (déjà terminée pour l'URL)
         task_id = task_manager.create_task("upload_zip_file", {

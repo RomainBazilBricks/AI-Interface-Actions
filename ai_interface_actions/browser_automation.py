@@ -653,12 +653,52 @@ class BrowserAutomation:
             
             # Pas de vérification de connexion - l'utilisateur se connecte manuellement
             
+            # Diagnostic de l'état de la page avant recherche
+            current_url = page.url
+            page_title = await page.title()
+            logger.info("🔍 Diagnostic de la page avant recherche de zone de saisie", 
+                       url=current_url, 
+                       title=page_title)
+            
             # Recherche du champ de saisie de message avec récupération automatique
             logger.info("Recherche du champ de saisie avec système de récupération")
             message_input = await self._find_message_input_with_recovery(page, conversation_url)
             
             if not message_input:
-                raise Exception("Impossible de trouver le champ de saisie de message malgré les tentatives de récupération")
+                # Diagnostic détaillé en cas d'échec
+                logger.error("❌ DIAGNOSTIC DÉTAILLÉ - Zone de saisie non trouvée")
+                logger.error("URL actuelle", url=page.url)
+                logger.error("Titre de page", title=await page.title())
+                
+                # Capturer le HTML pour diagnostic
+                try:
+                    html_snippet = await page.evaluate("""
+                        () => {
+                            // Chercher tous les textarea et input
+                            const textareas = Array.from(document.querySelectorAll('textarea'));
+                            const inputs = Array.from(document.querySelectorAll('input'));
+                            
+                            return {
+                                textareas: textareas.map(t => ({
+                                    placeholder: t.placeholder,
+                                    visible: t.offsetParent !== null,
+                                    disabled: t.disabled
+                                })),
+                                inputs: inputs.map(i => ({
+                                    type: i.type,
+                                    placeholder: i.placeholder,
+                                    visible: i.offsetParent !== null,
+                                    disabled: i.disabled
+                                })),
+                                bodyText: document.body.innerText.substring(0, 500)
+                            };
+                        }
+                    """)
+                    logger.error("Éléments détectés sur la page", elements=html_snippet)
+                except Exception as diag_e:
+                    logger.error("Impossible de capturer le diagnostic HTML", error=str(diag_e))
+                
+                raise Exception(f"Impossible de trouver le champ de saisie de message malgré les tentatives de récupération. URL: {current_url}, Titre: {page_title}")
             
             # Saisie du message
             logger.info("Saisie du message")
@@ -1364,10 +1404,79 @@ class BrowserAutomation:
             # Attendre que l'interface soit chargée
             await page.wait_for_timeout(3000)
             
+            # Diagnostic de l'état de la page avant recherche
+            current_url = page.url
+            page_title = await page.title()
+            logger.info("🔍 Diagnostic de la page avant recherche de zone de saisie", 
+                       url=current_url, 
+                       title=page_title)
+            
+            # Vérifier si l'utilisateur est connecté
+            try:
+                # Chercher des indicateurs de connexion
+                login_indicators = [
+                    "text=Se connecter", "text=Sign in", "text=Login",
+                    "input[type='email']", "input[type='password']",
+                    "button:has-text('Se connecter')", "button:has-text('Sign in')"
+                ]
+                
+                is_logged_out = False
+                for indicator in login_indicators:
+                    try:
+                        element = page.locator(indicator).first
+                        if await element.count() > 0 and await element.is_visible():
+                            logger.warning("⚠️ Indicateur de déconnexion détecté", indicator=indicator)
+                            is_logged_out = True
+                            break
+                    except Exception:
+                        continue
+                
+                if is_logged_out:
+                    raise Exception("Utilisateur non connecté à Manus.ai - session expirée ou credentials invalides")
+                else:
+                    logger.info("✅ Aucun indicateur de déconnexion détecté")
+                    
+            except Exception as e:
+                logger.error("Erreur lors de la vérification de connexion", error=str(e))
+                # Ne pas bloquer, continuer avec la recherche
+            
             # Rechercher le champ de saisie pour identifier la zone de drop avec récupération
             message_input = await self._find_message_input_with_recovery(page, conversation_url)
             if not message_input:
-                raise Exception("Impossible de trouver la zone de chat pour l'upload malgré les tentatives de récupération")
+                # Diagnostic détaillé en cas d'échec
+                logger.error("❌ DIAGNOSTIC DÉTAILLÉ - Zone de saisie non trouvée")
+                logger.error("URL actuelle", url=page.url)
+                logger.error("Titre de page", title=await page.title())
+                
+                # Capturer le HTML pour diagnostic
+                try:
+                    html_snippet = await page.evaluate("""
+                        () => {
+                            // Chercher tous les textarea et input
+                            const textareas = Array.from(document.querySelectorAll('textarea'));
+                            const inputs = Array.from(document.querySelectorAll('input'));
+                            
+                            return {
+                                textareas: textareas.map(t => ({
+                                    placeholder: t.placeholder,
+                                    visible: t.offsetParent !== null,
+                                    disabled: t.disabled
+                                })),
+                                inputs: inputs.map(i => ({
+                                    type: i.type,
+                                    placeholder: i.placeholder,
+                                    visible: i.offsetParent !== null,
+                                    disabled: i.disabled
+                                })),
+                                bodyText: document.body.innerText.substring(0, 500)
+                            };
+                        }
+                    """)
+                    logger.error("Éléments détectés sur la page", elements=html_snippet)
+                except Exception as diag_e:
+                    logger.error("Impossible de capturer le diagnostic HTML", error=str(diag_e))
+                
+                raise Exception(f"Impossible de trouver la zone de chat pour l'upload malgré les tentatives de récupération. URL: {current_url}, Titre: {page_title}")
             
             logger.info("Zone de chat trouvée, préparation du drag & drop")
             
