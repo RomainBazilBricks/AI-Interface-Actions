@@ -1053,13 +1053,13 @@ class BrowserAutomation:
             if conversation_url and conversation_url.strip():
                 if current_url != conversation_url:
                     logger.info("🔄 Navigation vers URL de conversation cible")
-                    await page.goto(conversation_url, wait_until="networkidle", timeout=15000)
+                    await page.goto(conversation_url, wait_until="networkidle", timeout=settings.page_timeout)
                     await page.wait_for_timeout(2000)  # Attendre stabilisation
                     logger.info("✅ Navigation vers conversation terminée")
                     return True
                 else:
                     logger.info("🔄 Déjà sur la bonne URL, rechargement de la page")
-                    await page.reload(wait_until="networkidle", timeout=15000)
+                    await page.reload(wait_until="networkidle", timeout=settings.page_timeout)
                     await page.wait_for_timeout(2000)
                     logger.info("✅ Rechargement terminé")
                     return True
@@ -1067,7 +1067,7 @@ class BrowserAutomation:
             # Stratégie 2: Si pas d'URL spécifique, aller à la page d'accueil
             else:
                 logger.info("🔄 Navigation vers page d'accueil Manus.ai")
-                await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=15000)
+                await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=settings.page_timeout)
                 await page.wait_for_timeout(2000)
                 logger.info("✅ Navigation vers accueil terminée")
                 return True

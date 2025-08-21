@@ -316,7 +316,7 @@ async def debug_session_status():
         
         # Naviguer vers Manus.ai
         logger.info("Navigation vers Manus.ai pour diagnostic")
-        await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=15000)
+        await page.goto(settings.manus_base_url, wait_until="networkidle", timeout=settings.page_timeout)
         
         # Collecter les informations de diagnostic
         diagnostic_info = await page.evaluate("""
