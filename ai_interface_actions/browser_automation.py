@@ -191,10 +191,9 @@ class BrowserAutomation:
         Returns:
             Page Playwright réutilisable
         """
-        logger.info("🔍 DEBUT _get_or_create_page", 
+        logger.info("🔍 Récupération/création de page", 
                    conversation_url=conversation_url,
-                   pool_size=len(self.active_pages),
-                   pool_keys=list(self.active_pages.keys()))
+                   pool_size=len(self.active_pages))
         
         # Nettoyer les pages fermées
         closed_pages = []
@@ -238,16 +237,24 @@ class BrowserAutomation:
                     except Exception as e:
                         logger.warning("Erreur lors de la vérification de page existante", error=str(e))
         
-        # Créer une nouvelle page
+        # Pour les nouvelles conversations, essayer de réutiliser une page générique existante
+        if not conversation_url or not conversation_url.strip():
+            # Chercher une page générique existante (sans URL spécifique ou "nouvelle_conversation")
+            for existing_key, page in list(self.active_pages.items()):
+                if not page.is_closed() and (not existing_key or existing_key == "nouvelle_conversation" or existing_key == "diagnostic"):
+                    logger.info("✅ REUTILISATION page générique existante", key=existing_key)
+                    return page
+        
+        # Créer une nouvelle page seulement si nécessaire
         logger.warning("🆕 CREATION NOUVELLE PAGE", 
                       conversation_url=conversation_url or "nouvelle_conversation",
                       reason="Aucune page existante trouvée")
         page = await self.context.new_page()
         
-        # L'ajouter au pool si on a une URL de conversation
-        if conversation_url and conversation_url.strip():
-            self.active_pages[conversation_url] = page
-            logger.info("📝 Page ajoutée au pool", url=conversation_url, pool_size=len(self.active_pages))
+        # L'ajouter au pool avec une clé appropriée
+        pool_key = conversation_url if conversation_url and conversation_url.strip() else "nouvelle_conversation"
+        self.active_pages[pool_key] = page
+        logger.info("📝 Page ajoutée au pool", url=pool_key, pool_size=len(self.active_pages))
         
         return page
     
@@ -845,45 +852,86 @@ class BrowserAutomation:
                    url=current_url, 
                    context="conversation" if is_conversation_page else "nouvelle")
         
-        # Sélecteurs optimisés selon le contexte avec fallbacks intelligents
-        if is_conversation_page:
-            # Page de conversation existante - sélecteurs prioritaires
-            selectors = [
-                "textarea[placeholder*='Send message to Manus']",           # Exact match conversation
-                "textarea[placeholder*='Send message']",                    # Partiel conversation
-                "textarea[placeholder*='message to Manus']",                # Partiel spécifique
-                "textarea[placeholder*='message']",                         # Générique message
-                "textarea[placeholder*='Message']",                         # Générique Message (maj)
-            ]
-        else:
-            # Page d'accueil/nouvelle conversation - sélecteurs prioritaires  
-            selectors = [
-                "textarea[placeholder*='Assign a task or ask anything']",   # Exact match accueil
-                "textarea[placeholder*='Assign a task']",                   # Partiel accueil
-                "textarea[placeholder*='ask anything']",                    # Partiel accueil
-                "textarea[placeholder*='Attribuez une tâche']",             # Français
-                "textarea[placeholder*='posez une question']",              # Français
-            ]
-        
-        # Sélecteurs génériques permissifs (fallback pour les deux contextes)
-        fallback_selectors = [
-            "textarea[placeholder*='message']",                             # Générique message
-            "textarea[placeholder*='Message']",                             # Générique Message (maj)
-            "textarea[placeholder*='Tapez']",                               # Français générique
-            "textarea[placeholder*='Type']",                                # Anglais générique
-            "input[placeholder*='message']",                                # Input message
-            "input[placeholder*='Message']",                                # Input Message (maj)
-            "[contenteditable='true']",                                     # Contenteditable
-            "textarea:not([readonly]):not([disabled])",                     # Textarea non readonly/disabled
-            "textarea.resize-none",                                         # Classe CSS commune
-            ".message-input textarea",                                      # Classe wrapper
-            "#message-input",                                               # ID direct
-            "textarea[rows]",                                               # Textarea avec rows
-            "div[data-dashlane-rid] textarea",                              # Avec Dashlane (détecté dans le HTML)
+        # Sélecteurs ULTRA-PERMISSIFS - priorité aux plus spécifiques
+        # Tous les placeholders connus de Manus.ai (français et anglais)
+        specific_selectors = [
+            # Français - tous les variants possibles
+            "textarea[placeholder='Attribuez une tâche ou posez une question']",
+            "textarea[placeholder*='Attribuez une tâche ou posez une question']",
+            "textarea[placeholder*='Attribuez une tâche']",
+            "textarea[placeholder*='posez une question']", 
+            "textarea[placeholder*='Attribuez']",
+            "textarea[placeholder*='tâche']",
+            "textarea[placeholder*='question']",
+            
+            # Anglais - tous les variants possibles
+            "textarea[placeholder='Assign a task or ask anything']",
+            "textarea[placeholder*='Assign a task or ask anything']",
+            "textarea[placeholder*='Assign a task']",
+            "textarea[placeholder*='ask anything']",
+            "textarea[placeholder*='Assign']",
+            "textarea[placeholder*='task']",
+            "textarea[placeholder*='anything']",
+            
+            # Messages dans conversations
+            "textarea[placeholder*='Send message to Manus']",
+            "textarea[placeholder*='Send message']",
+            "textarea[placeholder*='message to Manus']",
+            "textarea[placeholder*='Envoyer un message']",
+            "textarea[placeholder*='Écrivez votre message']",
+            
+            # Génériques message
+            "textarea[placeholder*='message']",
+            "textarea[placeholder*='Message']",
+            "textarea[placeholder*='Tapez']",
+            "textarea[placeholder*='Type']",
+            "textarea[placeholder*='Écrivez']",
+            "textarea[placeholder*='Write']",
         ]
         
-        # Combiner les sélecteurs contextuels + fallbacks
-        all_selectors = selectors + fallback_selectors
+        # Sélecteurs génériques TRÈS permissifs (fallback ultime)
+        fallback_selectors = [
+            # Inputs alternatifs
+            "input[placeholder*='message']",
+            "input[placeholder*='Message']", 
+            "input[placeholder*='tâche']",
+            "input[placeholder*='task']",
+            
+            # Contenteditable
+            "[contenteditable='true']",
+            "div[contenteditable='true']",
+            
+            # Textarea par structure
+            "textarea:not([readonly]):not([disabled])",
+            "textarea:not([style*='display: none']):not([style*='display:none'])",
+            "textarea[rows]",
+            "textarea.resize-none",
+            "textarea[class*='input']",
+            "textarea[class*='chat']",
+            "textarea[class*='message']",
+            
+            # Par classes CSS communes
+            ".message-input textarea",
+            ".chat-input textarea", 
+            ".input-container textarea",
+            ".text-input textarea",
+            
+            # Par IDs
+            "#message-input",
+            "#chat-input",
+            "#text-input",
+            
+            # Avec attributs spéciaux
+            "textarea[data-testid]",
+            "textarea[aria-label]",
+            "div[data-dashlane-rid] textarea",
+            
+            # Derniers recours - tout textarea visible
+            "textarea",
+        ]
+        
+        # Combiner tous les sélecteurs (spécifiques + fallbacks)
+        all_selectors = specific_selectors + fallback_selectors
         
         # Essayer chaque sélecteur avec logging détaillé
         for i, selector in enumerate(all_selectors):
@@ -900,7 +948,7 @@ class BrowserAutomation:
                                count=count, 
                                visible=is_visible,
                                enabled=is_enabled,
-                               priority="contextuel" if i < len(selectors) else "fallback")
+                               priority="spécifique" if i < len(specific_selectors) else "fallback")
                     
                     if is_visible and is_enabled:
                         logger.info("✅ Champ de saisie trouvé avec succès", 
@@ -997,7 +1045,7 @@ class BrowserAutomation:
         """
         try:
             current_url = page.url
-            logger.info(f"🔄 Début récupération {attempt}", 
+            logger.info(f"🔄 Récupération automatique - Tentative {attempt}", 
                        current_url=current_url, 
                        target_url=conversation_url or "page d'accueil")
             
@@ -1387,7 +1435,9 @@ class BrowserAutomation:
                 raise Exception("Seuls les fichiers .zip sont supportés")
             
             # Récupérer ou créer une page appropriée
-            page = await self._get_or_create_page(conversation_url)
+            # Pour les nouvelles conversations, utiliser la page partagée
+            page_key = conversation_url if conversation_url and conversation_url.strip() else "shared"
+            page = await self._get_or_create_page(page_key)
             
             # Navigation vers Manus.ai ou conversation spécifique
             if conversation_url and conversation_url.strip():
@@ -1501,16 +1551,43 @@ class BrowserAutomation:
                             lastModified: Date.now()
                         });
                         
-                        // Chercher la zone de drop (plusieurs sélecteurs possibles)
+                        // Chercher la zone de drop - ULTRA-PERMISSIF
                         const dropZoneSelectors = [
+                            // Sélecteurs spécifiques Manus.ai
+                            'textarea[placeholder="Attribuez une tâche ou posez une question"]',
+                            'textarea[placeholder="Assign a task or ask anything"]',
                             'textarea[placeholder*="Attribuez"]',
+                            'textarea[placeholder*="Assign"]',
+                            'textarea[placeholder*="tâche"]',
+                            'textarea[placeholder*="task"]',
+                            'textarea[placeholder*="question"]',
+                            'textarea[placeholder*="anything"]',
                             'textarea[placeholder*="posez"]',
                             'textarea[placeholder*="message"]',
+                            'textarea[placeholder*="Message"]',
+                            'textarea[placeholder*="Send message"]',
+                            'textarea[placeholder*="Envoyer"]',
+                            'textarea[placeholder*="Écrivez"]',
+                            'textarea[placeholder*="Write"]',
+                            
+                            // Sélecteurs génériques
+                            'textarea:not([readonly]):not([disabled])',
+                            'textarea[rows]',
+                            'textarea.resize-none',
+                            'input[type="text"]:not([readonly]):not([disabled])',
+                            '[contenteditable="true"]',
+                            
+                            // Conteneurs
                             '.chat-input-container',
-                            '.message-input-container',
+                            '.message-input-container', 
+                            '.input-container',
                             '.chat-container',
+                            '.text-input-container',
+                            
+                            // Fallbacks larges
                             '.main-content',
-                            'main'
+                            'main',
+                            'body'
                         ];
                         
                         let dropZone = null;

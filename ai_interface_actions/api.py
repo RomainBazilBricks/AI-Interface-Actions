@@ -311,8 +311,8 @@ async def debug_session_status():
         # Initialiser le navigateur si nécessaire
         await browser_manager.ensure_initialized()
         
-        # Créer une page de test
-        page = await browser_manager._get_or_create_page("")
+        # Réutiliser une page existante ou en créer une (page partagée)
+        page = await browser_manager._get_or_create_page("shared")
         
         # Naviguer vers Manus.ai
         logger.info("Navigation vers Manus.ai pour diagnostic")
@@ -333,7 +333,16 @@ async def debug_session_status():
                         disabled: t.disabled
                     })),
                     loginIndicators: {
-                        hasLoginButton: !!document.querySelector('button:has-text("Se connecter"), button:has-text("Sign in"), button:has-text("Login")'),
+                        hasLoginButton: !!(
+                            document.querySelector('button[type="submit"]') ||
+                            Array.from(document.querySelectorAll('button')).find(btn => 
+                                btn.textContent && (
+                                    btn.textContent.includes('Se connecter') || 
+                                    btn.textContent.includes('Sign in') || 
+                                    btn.textContent.includes('Login')
+                                )
+                            )
+                        ),
                         hasEmailInput: !!document.querySelector('input[type="email"]'),
                         hasPasswordInput: !!document.querySelector('input[type="password"]'),
                     },
