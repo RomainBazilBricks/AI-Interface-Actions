@@ -68,6 +68,7 @@ class ZipUrlUploadRequest(BaseModel):
     conversation_url: str = Field(default="", description="URL de conversation existante (optionnel - nouvelle conversation si vide)")
     wait_for_response: bool = Field(default=True, description="Attendre la réponse de l'IA")
     timeout_seconds: int = Field(default=60, description="Timeout pour la réponse", ge=10, le=300)
+    project_unique_id: str = Field(default="", description="ID unique du projet (optionnel)", alias="projectUniqueId")
 
 
 class FileUploadResponse(BaseModel):
