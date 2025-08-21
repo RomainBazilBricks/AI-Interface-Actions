@@ -1452,7 +1452,7 @@ class BrowserAutomation:
                 await page.goto(settings.manus_base_url, wait_until="networkidle")
             
             # Attendre que l'interface soit chargée
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(5000)
             
             # Diagnostic de l'état de la page avant recherche
             current_url = page.url
@@ -1531,14 +1531,31 @@ class BrowserAutomation:
             logger.info("Zone de chat trouvée, préparation du drag & drop")
             
             # Lire le fichier en tant que buffer pour le drag & drop
+            logger.info("📖 Lecture du fichier ZIP en mémoire...")
             with open(file_path, 'rb') as f:
                 file_content = f.read()
             
             filename = os.path.basename(file_path)
-            logger.info(f"Fichier lu: {filename}, taille: {len(file_content)} bytes")
+            file_size_mb = len(file_content) / (1024 * 1024)
+            logger.info(f"✅ Fichier lu: {filename}, taille: {len(file_content)} bytes ({file_size_mb:.1f} MB)")
+            
+            # Ajuster le timeout selon la taille du fichier
+            if file_size_mb > 50:
+                # Très gros fichier : timeout x3
+                adjusted_timeout = timeout_seconds * 3
+                logger.warning(f"⚠️ Fichier très volumineux ({file_size_mb:.1f} MB) - timeout ajusté à {adjusted_timeout}s")
+            elif file_size_mb > 20:
+                # Gros fichier : timeout x2
+                adjusted_timeout = timeout_seconds * 2
+                logger.warning(f"⚠️ Fichier volumineux ({file_size_mb:.1f} MB) - timeout ajusté à {adjusted_timeout}s")
+            else:
+                adjusted_timeout = timeout_seconds
+                
+            timeout_seconds = adjusted_timeout
             
             # Simuler le drag & drop avec Playwright
-            logger.info("Simulation du drag & drop du fichier .zip")
+            logger.info("🚀 Début de la simulation du drag & drop du fichier .zip")
+            logger.info(f"📊 Transfert de {file_size_mb:.1f} MB vers le navigateur...")
             upload_result = await page.evaluate("""
                 async (fileData) => {
                     const { fileName, fileContent } = fileData;
@@ -1668,12 +1685,13 @@ class BrowserAutomation:
             if not upload_result.get("success"):
                 raise Exception(f"Échec du drag & drop: {upload_result.get('error', 'Erreur inconnue')}")
             
-            logger.info("Drag & drop simulé avec succès", 
+            logger.info("✅ Drag & drop simulé avec succès", 
                        drop_zone_found=upload_result.get("dropZoneFound"),
                        file_input_found=upload_result.get("fileInputFound"))
+            logger.info("⏳ Attente du traitement par Manus.ai...")
             
-            # Attendre que l'upload soit traité par l'interface
-            await page.wait_for_timeout(2000)
+            # Attendre que l'upload soit traité par l'interface (plus long pour gros fichiers)
+            await page.wait_for_timeout(10000)
             
             # Ajouter le message d'accompagnement si fourni
             if message.strip():
