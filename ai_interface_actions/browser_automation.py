@@ -1556,6 +1556,7 @@ class BrowserAutomation:
             # Simuler le drag & drop avec Playwright
             logger.info("🚀 Début de la simulation du drag & drop du fichier .zip")
             logger.info(f"📊 Transfert de {file_size_mb:.1f} MB vers le navigateur...")
+            logger.info(f"⏱️ Timeout configuré: {timeout_seconds}s pour page.evaluate()")
             upload_result = await page.evaluate("""
                 async (fileData) => {
                     const { fileName, fileContent } = fileData;
@@ -1680,7 +1681,7 @@ class BrowserAutomation:
             """, {
                 "fileName": filename,
                 "fileContent": list(file_content)
-            })
+            }, timeout=timeout_seconds * 1000)  # Convertir en millisecondes
             
             if not upload_result.get("success"):
                 raise Exception(f"Échec du drag & drop: {upload_result.get('error', 'Erreur inconnue')}")

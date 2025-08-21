@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     window_width: int = Field(default=1440, description="Largeur de fenêtre en mode visible (0 = taille standard)")
     window_height: int = Field(default=900, description="Hauteur de fenêtre en mode visible (0 = taille standard)")
     disable_javascript: bool = Field(default=False, description="Désactiver JavaScript (pour debug)")
-    browser_timeout: int = Field(default=30000, description="Timeout global du navigateur (ms)")
-    page_timeout: int = Field(default=60000, description="Timeout de chargement des pages (ms)")
+    browser_timeout: int = Field(default=300000, description="Timeout global du navigateur (ms)")  # 5 minutes
+    page_timeout: int = Field(default=180000, description="Timeout de chargement des pages (ms)")  # 3 minutes
     
     # Configuration Manus.ai
     manus_base_url: str = Field(default="https://www.manus.im", description="URL de base de Manus.im")
