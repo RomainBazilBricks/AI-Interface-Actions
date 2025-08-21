@@ -1553,160 +1553,271 @@ class BrowserAutomation:
                 
             timeout_seconds = adjusted_timeout
             
-            # Simuler le drag & drop avec Playwright
-            logger.info("🚀 Début de la simulation du drag & drop du fichier .zip")
-            logger.info(f"📊 Transfert de {file_size_mb:.1f} MB vers le navigateur...")
-            logger.info(f"⏱️ Timeout configuré: {timeout_seconds}s pour page.evaluate()")
-            upload_result = await page.evaluate("""
-                async (fileData) => {
-                    const { fileName, fileContent } = fileData;
-                    
-                    try {
-                        // Créer un objet File à partir du buffer
-                        const uint8Array = new Uint8Array(fileContent);
-                        const file = new File([uint8Array], fileName, { 
-                            type: 'application/zip',
-                            lastModified: Date.now()
-                        });
-                        
-                        // Chercher la zone de drop - ULTRA-PERMISSIF
-                        const dropZoneSelectors = [
-                            // Sélecteurs spécifiques Manus.ai
-                            'textarea[placeholder="Attribuez une tâche ou posez une question"]',
-                            'textarea[placeholder="Assign a task or ask anything"]',
-                            'textarea[placeholder*="Attribuez"]',
-                            'textarea[placeholder*="Assign"]',
-                            'textarea[placeholder*="tâche"]',
-                            'textarea[placeholder*="task"]',
-                            'textarea[placeholder*="question"]',
-                            'textarea[placeholder*="anything"]',
-                            'textarea[placeholder*="posez"]',
-                            'textarea[placeholder*="message"]',
-                            'textarea[placeholder*="Message"]',
-                            'textarea[placeholder*="Send message"]',
-                            'textarea[placeholder*="Envoyer"]',
-                            'textarea[placeholder*="Écrivez"]',
-                            'textarea[placeholder*="Write"]',
-                            
-                            // Sélecteurs génériques
-                            'textarea:not([readonly]):not([disabled])',
-                            'textarea[rows]',
-                            'textarea.resize-none',
-                            'input[type="text"]:not([readonly]):not([disabled])',
-                            '[contenteditable="true"]',
-                            
-                            // Conteneurs
-                            '.chat-input-container',
-                            '.message-input-container', 
-                            '.input-container',
-                            '.chat-container',
-                            '.text-input-container',
-                            
-                            // Fallbacks larges
-                            '.main-content',
-                            'main',
-                            'body'
-                        ];
-                        
-                        let dropZone = null;
-                        for (const selector of dropZoneSelectors) {
-                            dropZone = document.querySelector(selector);
-                            if (dropZone) {
-                                console.log('Zone de drop trouvée:', selector);
-                                break;
-                            }
-                        }
-                        
-                        if (!dropZone) {
-                            throw new Error('Aucune zone de drop trouvée');
-                        }
-                        
-                        // Créer les événements de drag & drop
-                        const dataTransfer = new DataTransfer();
-                        dataTransfer.items.add(file);
-                        
-                        // Simuler la séquence complète de drag & drop
-                        const events = [
-                            new DragEvent('dragenter', {
-                                bubbles: true,
-                                cancelable: true,
-                                dataTransfer: dataTransfer
-                            }),
-                            new DragEvent('dragover', {
-                                bubbles: true,
-                                cancelable: true,
-                                dataTransfer: dataTransfer
-                            }),
-                            new DragEvent('drop', {
-                                bubbles: true,
-                                cancelable: true,
-                                dataTransfer: dataTransfer
-                            })
-                        ];
-                        
-                        // Déclencher les événements avec des délais
-                        for (const event of events) {
-                            dropZone.dispatchEvent(event);
-                            await new Promise(resolve => setTimeout(resolve, 100));
-                        }
-                        
-                        // Vérifier si un input file est disponible comme fallback
-                        const fileInput = document.querySelector('input[type="file"]');
-                        if (fileInput) {
-                            console.log('Input file trouvé comme fallback');
-                            // Simuler la sélection de fichier sur l'input
-                            const dt = new DataTransfer();
-                            dt.items.add(file);
-                            fileInput.files = dt.files;
-                            
-                            // Déclencher l'événement change
-                            const changeEvent = new Event('change', { bubbles: true });
-                            fileInput.dispatchEvent(changeEvent);
-                        }
-                        
-                        return {
-                            success: true,
-                            message: `Fichier ${fileName} uploadé avec succès`,
-                            dropZoneFound: !!dropZone,
-                            fileInputFound: !!fileInput
-                        };
-                        
-                    } catch (error) {
-                        return {
-                            success: false,
-                            error: error.message
-                        };
+            # Nouvelle approche optimisée : Upload via bouton paperclip
+            logger.info("🚀 Début de l'upload via bouton paperclip (optimisé)")
+            logger.info(f"📁 Fichier: {file_size_mb:.1f} MB - Pas de transfert JavaScript !")
+            logger.info(f"⏱️ Timeout configuré: {timeout_seconds}s")
+            
+            try:
+                # Étape 1: Cliquer sur le bouton paperclip
+                logger.info("📎 Clic sur le bouton paperclip...")
+                paperclip_button = page.locator('button:has(svg.lucide-paperclip)').first
+                await paperclip_button.click()
+                
+                # Attendre que le dialog apparaisse
+                await page.wait_for_timeout(1000)
+                logger.info("✅ Dialog paperclip ouvert")
+                
+                # Étape 2: Cliquer sur "Choisir des fichiers locaux"
+                logger.info("📂 Clic sur 'Choisir des fichiers locaux'...")
+                local_files_option = page.locator('text=Choisir des fichiers locaux').first
+                
+                # Préparer l'écoute de l'input file qui va s'ouvrir
+                async with page.expect_file_chooser() as fc_info:
+                    await local_files_option.click()
+                
+                file_chooser = await fc_info.value
+                logger.info("✅ Sélecteur de fichier natif ouvert")
+                
+                # Étape 3: Sélectionner le fichier via l'API native
+                logger.info(f"📤 Upload du fichier via API native: {file_path}")
+                await file_chooser.set_files(file_path)
+                logger.info("✅ Fichier sélectionné via API native - TRÈS RAPIDE !")
+                
+                # Étape 4: Attendre que l'upload soit terminé (bouton activé)
+                logger.info("⏳ Attente de la fin de l'upload (bouton send activé)...")
+                
+                # Attendre que le bouton d'envoi ne soit plus disabled
+                send_button_selector = 'button:has(svg):not([disabled])'
+                try:
+                    await page.wait_for_selector(send_button_selector, timeout=timeout_seconds * 1000)
+                    logger.info("✅ Upload terminé - bouton d'envoi activé !")
+                except Exception as e:
+                    logger.warning(f"⚠️ Timeout attente bouton activé: {str(e)}")
+                    # Continuer quand même, peut-être que c'est déjà prêt
+                
+                # Double vérification : attendre que disabled disparaisse
+                await page.wait_for_function("""
+                    () => {
+                        const sendButton = document.querySelector('button:has(svg)');
+                        return sendButton && !sendButton.disabled;
                     }
-                }
-            """, {
-                "fileName": filename,
-                "fileContent": list(file_content)
-            }, timeout=timeout_seconds * 1000)  # Convertir en millisecondes
-            
+                """, timeout=10000)
+                logger.info("✅ Double vérification - bouton vraiment activé !")
+                
+                upload_result = {"success": True, "method": "paperclip_native"}
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Échec méthode paperclip: {str(e)}")
+                logger.info("🔄 Fallback vers drag & drop...")
+                
+                # Fallback vers l'ancienne méthode drag & drop
+                upload_result = await asyncio.wait_for(
+                    page.evaluate("""
+                        async (fileData) => {
+                        const { fileName, fileContent } = fileData;
+                        
+                        try {
+                            // Créer un objet File à partir du buffer
+                            const uint8Array = new Uint8Array(fileContent);
+                            const file = new File([uint8Array], fileName, { 
+                                type: 'application/zip',
+                                lastModified: Date.now()
+                            });
+                            
+                            // Chercher la zone de drop - ULTRA-PERMISSIF
+                            const dropZoneSelectors = [
+                                // Sélecteurs spécifiques Manus.ai
+                                'textarea[placeholder="Attribuez une tâche ou posez une question"]',
+                                'textarea[placeholder="Assign a task or ask anything"]',
+                                'textarea[placeholder*="Attribuez"]',
+                                'textarea[placeholder*="Assign"]',
+                                'textarea[placeholder*="tâche"]',
+                                'textarea[placeholder*="task"]',
+                                'textarea[placeholder*="question"]',
+                                'textarea[placeholder*="anything"]',
+                                'textarea[placeholder*="posez"]',
+                                'textarea[placeholder*="message"]',
+                                'textarea[placeholder*="Message"]',
+                                'textarea[placeholder*="Send message"]',
+                                'textarea[placeholder*="Envoyer"]',
+                                'textarea[placeholder*="Écrivez"]',
+                                'textarea[placeholder*="Write"]',
+                                
+                                // Sélecteurs génériques
+                                'textarea:not([readonly]):not([disabled])',
+                                'textarea[rows]',
+                                'textarea.resize-none',
+                                'input[type="text"]:not([readonly]):not([disabled])',
+                                '[contenteditable="true"]',
+                                
+                                // Conteneurs
+                                '.chat-input-container',
+                                '.message-input-container', 
+                                '.input-container',
+                                '.chat-container',
+                                '.text-input-container',
+                                
+                                // Fallbacks larges
+                                '.main-content',
+                                'main',
+                                'body'
+                            ];
+                            
+                            let dropZone = null;
+                            for (const selector of dropZoneSelectors) {
+                                dropZone = document.querySelector(selector);
+                                if (dropZone) {
+                                    console.log('Zone de drop trouvée:', selector);
+                                    break;
+                                }
+                            }
+                            
+                            if (!dropZone) {
+                                throw new Error('Aucune zone de drop trouvée');
+                            }
+                            
+                            // Créer les événements de drag & drop
+                            const dataTransfer = new DataTransfer();
+                            dataTransfer.items.add(file);
+                            
+                            // Simuler la séquence complète de drag & drop
+                            const events = [
+                                new DragEvent('dragenter', {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    dataTransfer: dataTransfer
+                                }),
+                                new DragEvent('dragover', {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    dataTransfer: dataTransfer
+                                }),
+                                new DragEvent('drop', {
+                                    bubbles: true,
+                                    cancelable: true,
+                                    dataTransfer: dataTransfer
+                                })
+                            ];
+                            
+                            // Déclencher les événements avec des délais
+                            for (const event of events) {
+                                dropZone.dispatchEvent(event);
+                                await new Promise(resolve => setTimeout(resolve, 100));
+                            }
+                            
+                            // Vérifier si un input file est disponible comme fallback
+                            const fileInput = document.querySelector('input[type="file"]');
+                            if (fileInput) {
+                                console.log('Input file trouvé comme fallback');
+                                // Simuler la sélection de fichier sur l'input
+                                const dt = new DataTransfer();
+                                dt.items.add(file);
+                                fileInput.files = dt.files;
+                                
+                                // Déclencher l'événement change
+                                const changeEvent = new Event('change', { bubbles: true });
+                                fileInput.dispatchEvent(changeEvent);
+                            }
+                            
+                            return {
+                                success: true,
+                                message: `Fichier ${fileName} uploadé avec succès`,
+                                dropZoneFound: !!dropZone,
+                                fileInputFound: !!fileInput
+                            };
+                            
+                        } catch (error) {
+                            return {
+                                success: false,
+                                error: error.message
+                            };
+                        }
+                        }
+                    """, {
+                        "fileName": filename,
+                        "fileContent": list(file_content)
+                    }),
+                    timeout=timeout_seconds  # Timeout en secondes pour asyncio.wait_for()
+                )
+                upload_result["method"] = "drag_drop_fallback"
+                
+            # Gestion des erreurs communes
             if not upload_result.get("success"):
-                raise Exception(f"Échec du drag & drop: {upload_result.get('error', 'Erreur inconnue')}")
+                method = upload_result.get("method", "unknown")
+                error_msg = upload_result.get("error", "Erreur inconnue")
+                raise Exception(f"Échec upload ({method}): {error_msg}")
             
-            logger.info("✅ Drag & drop simulé avec succès", 
+            method = upload_result.get("method", "unknown")
+            logger.info(f"✅ Upload réussi via {method}", 
                        drop_zone_found=upload_result.get("dropZoneFound"),
                        file_input_found=upload_result.get("fileInputFound"))
             logger.info("⏳ Attente du traitement par Manus.ai...")
             
-            # Attendre que l'upload soit traité par l'interface (plus long pour gros fichiers)
-            await page.wait_for_timeout(10000)
+            # Pour la méthode paperclip, pas besoin d'attendre longtemps
+            if upload_result.get("method") == "paperclip_native":
+                logger.info("🚀 Méthode paperclip - upload déjà terminé, ajout direct du message")
+                await page.wait_for_timeout(1000)  # Juste 1s pour stabilisation
+            else:
+                # Attendre que l'upload soit traité par l'interface (plus long pour gros fichiers)
+                await page.wait_for_timeout(10000)
             
             # Ajouter le message d'accompagnement si fourni
             if message.strip():
-                logger.info("Ajout du message d'accompagnement")
+                logger.info("📝 Ajout du message d'accompagnement")
                 message_input = await self._find_message_input_with_recovery(page, conversation_url)
                 if message_input:
+                    # S'assurer que le champ est vide d'abord
+                    await message_input.clear()
                     await message_input.fill(message)
-                    logger.info("Message d'accompagnement ajouté")
+                    logger.info(f"✅ Message ajouté: '{message[:50]}...'")
                 else:
                     logger.warning("⚠️ Impossible de trouver la zone de saisie pour le message d'accompagnement")
             
-            # Envoyer le message (avec le fichier)
-            logger.info("Envoi du message avec le fichier")
-            await self._send_message(page)
+            # Logique d'envoi avec vérifications selon vos spécifications
+            logger.info("📤 Début de la logique d'envoi intelligente")
+            
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                logger.info(f"🔄 Tentative d'envoi {attempt + 1}/{max_attempts}")
+                
+                # Étape 1: Vérifier que le bouton n'est PAS disabled
+                logger.info("🔍 Vérification que le bouton d'envoi n'est pas disabled...")
+                try:
+                    # Attendre que le bouton ne soit plus disabled
+                    await page.wait_for_function("""
+                        () => {
+                            const sendButton = document.querySelector('button:has(svg)');
+                            return sendButton && !sendButton.disabled;
+                        }
+                    """, timeout=30000)  # 30s max pour que le bouton soit activé
+                    logger.info("✅ Bouton d'envoi activé - prêt à envoyer")
+                except Exception as e:
+                    logger.warning(f"⚠️ Timeout attente bouton activé: {str(e)}")
+                    continue
+                
+                # Étape 2: Envoyer le message
+                logger.info("📤 Clic sur le bouton Envoyer")
+                await self._send_message(page)
+                
+                # Étape 3: Attendre 5 secondes puis vérifier l'URL
+                logger.info("⏳ Attente 5 secondes puis vérification URL...")
+                await page.wait_for_timeout(5000)
+                
+                current_url = page.url
+                logger.info(f"🔍 URL actuelle: {current_url}")
+                
+                # Étape 4: Vérifier si l'URL contient un identifiant unique
+                if "/app/" in current_url and len(current_url.split("/app/")[-1]) > 10:
+                    conversation_id = current_url.split("/app/")[-1]
+                    logger.info(f"✅ SUCCESS! Message envoyé - Conversation ID: {conversation_id}")
+                    break
+                else:
+                    logger.warning(f"⚠️ URL sans identifiant unique - Retry {attempt + 1}/{max_attempts}")
+                    if attempt == max_attempts - 1:
+                        logger.error("❌ Échec après 10 tentatives - Message non envoyé")
+                    else:
+                        logger.info("🔄 Nouvelle tentative dans 5 secondes...")
             
             # Gérer le popup "Wide Research" s'il apparaît
             await self._handle_wide_research_popup(page)
